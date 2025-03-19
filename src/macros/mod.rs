@@ -52,3 +52,15 @@ macro_rules! simple_vmap {
         }
     };
 }
+
+// Import and re-export the vmap macros
+mod vmap_macros;
+
+// Re-export all vmap macros for easier access
+pub use crate::vmap;
+pub use crate::vmap_opt;
+pub use crate::vmap_extract;
+pub use crate::vmap_extract_string;
+pub use crate::vmap_extract_i32;
+pub use crate::vmap_extract_f64;
+pub use crate::vmap_extract_bool;
