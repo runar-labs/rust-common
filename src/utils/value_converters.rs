@@ -2,10 +2,8 @@
 //
 // Utility functions for converting between ValueType and other types
 
-use anyhow::{anyhow, Result};
 use serde::de::DeserializeOwned;
 use serde_json;
-use std::collections::HashMap;
 
 use crate::types::ValueType;
 

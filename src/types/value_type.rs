@@ -6,9 +6,8 @@ use anyhow::{anyhow, Result};
 use base64;
 use serde::{Deserialize, Serialize};
 use serde_bytes;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
-use std::fmt;
 use std::sync::Arc;
 
 /// ValueType represents a dynamically typed value that can be passed between services
@@ -277,9 +276,40 @@ impl From<Vec<u8>> for ValueType {
     }
 }
 
-impl<T: Into<ValueType>> From<Vec<T>> for ValueType {
-    fn from(v: Vec<T>) -> Self {
-        ValueType::Array(v.into_iter().map(|x| x.into()).collect())
+// Remove the generic Vec<T> implementation and replace with specific implementations
+impl From<Vec<ValueType>> for ValueType {
+    fn from(v: Vec<ValueType>) -> Self {
+        ValueType::Array(v)
+    }
+}
+
+impl From<Vec<String>> for ValueType {
+    fn from(v: Vec<String>) -> Self {
+        ValueType::Array(v.into_iter().map(ValueType::from).collect())
+    }
+}
+
+impl From<Vec<&str>> for ValueType {
+    fn from(v: Vec<&str>) -> Self {
+        ValueType::Array(v.into_iter().map(ValueType::from).collect())
+    }
+}
+
+impl From<Vec<f64>> for ValueType {
+    fn from(v: Vec<f64>) -> Self {
+        ValueType::Array(v.into_iter().map(ValueType::from).collect())
+    }
+}
+
+impl From<Vec<i32>> for ValueType {
+    fn from(v: Vec<i32>) -> Self {
+        ValueType::Array(v.into_iter().map(ValueType::from).collect())
+    }
+}
+
+impl From<Vec<bool>> for ValueType {
+    fn from(v: Vec<bool>) -> Self {
+        ValueType::Array(v.into_iter().map(ValueType::from).collect())
     }
 }
 
@@ -299,8 +329,26 @@ impl From<Value> for ValueType {
     }
 }
 
-impl<T: SerializableStruct + Send + Sync + 'static> From<T> for ValueType {
-    fn from(s: T) -> Self {
-        ValueType::Struct(Arc::new(s))
-    }
+// Remove the generic From<T> implementation and replace with a macro
+// that can be used to implement From for specific struct types
+
+/// Macro to implement From<YourStruct> for ValueType
+/// 
+/// Use this macro to implement From for your custom struct types that implement SerializableStruct.
+/// Example:
+/// ```
+/// struct MyStruct { /* ... */ }
+/// impl SerializableStruct for MyStruct {}
+/// 
+/// implement_from_for_valuetype!(MyStruct);
+/// ```
+#[macro_export]
+macro_rules! implement_from_for_valuetype {
+    ($struct_type:ty) => {
+        impl From<$struct_type> for $crate::types::ValueType {
+            fn from(s: $struct_type) -> Self {
+                $crate::types::ValueType::Struct(std::sync::Arc::new(s))
+            }
+        }
+    };
 }
