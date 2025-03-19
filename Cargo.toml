@@ -1,9 +1,9 @@
 [package]
-name = "kagi_common"
+name = "runar_common"
 version = "0.1.0"
 edition = "2021"
-authors = ["Kagi Team"]
-description = "Common traits and utilities for the Kagi P2P stack"
+authors = ["Runar Team"]
+description = "Common traits and utilities for the Runar P2P stack"
 
 [features]
 default = []
