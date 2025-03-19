@@ -1,3 +1,10 @@
+// WARNING: THIS FILE IS DEPRECATED AND SHOULD BE DELETED
+// The ServiceInfo trait functionality has been merged into AbstractService trait
+// to reduce duplication and simplify the codebase.
+// All service implementations should now directly implement AbstractService 
+// with the required metadata methods (name, path, description, version) instead.
+// This file is kept temporarily for backward compatibility but will be removed.
+
 /// The ServiceInfo trait defines the interface for accessing 
 /// basic information about a service.
 pub trait ServiceInfo {
