@@ -64,3 +64,11 @@ pub use crate::vmap_extract_string;
 pub use crate::vmap_extract_i32;
 pub use crate::vmap_extract_f64;
 pub use crate::vmap_extract_bool;
+
+// Define and export the vjson macro (JSON to ValueType)
+#[macro_export]
+macro_rules! vjson {
+    ($($json:tt)+) => {
+        $crate::types::ValueType::from(serde_json::json!($($json)+))
+    };
+}

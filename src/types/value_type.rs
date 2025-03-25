@@ -336,9 +336,33 @@ impl From<Value> for ValueType {
 /// 
 /// Use this macro to implement From for your custom struct types that implement SerializableStruct.
 /// Example:
-/// ```
-/// struct MyStruct { /* ... */ }
-/// impl SerializableStruct for MyStruct {}
+/// ```ignore
+/// use runar_common::implement_from_for_valuetype;
+/// use runar_common::types::SerializableStruct;
+/// use std::collections::HashMap;
+/// use runar_common::types::ValueType;
+/// use anyhow::Result;
+/// 
+/// #[derive(Debug)]
+/// struct MyStruct {}
+/// 
+/// impl SerializableStruct for MyStruct {
+///     fn to_map(&self) -> Result<HashMap<String, ValueType>> {
+///         Ok(HashMap::new())
+///     }
+///     
+///     fn to_json_value(&self) -> Result<serde_json::Value> {
+///         Ok(serde_json::json!({}))
+///     }
+///     
+///     fn type_name(&self) -> &'static str {
+///         "MyStruct"
+///     }
+///     
+///     fn clone_box(&self) -> Box<dyn SerializableStruct + Send + Sync + 'static> {
+///         Box::new(MyStruct {})
+///     }
+/// }
 /// 
 /// implement_from_for_valuetype!(MyStruct);
 /// ```

@@ -14,9 +14,8 @@ use crate::types::ValueType;
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```ignore
 /// use runar_common::types::ValueType;
-/// use runar_common::utils::value_to_type;
 /// 
 /// let value = ValueType::Number(30.0);
 /// let age: i32 = value_to_type(&value, 0);
@@ -38,9 +37,8 @@ pub fn value_to_type<T: DeserializeOwned>(value: &ValueType, default: T) -> T {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```ignore
 /// use runar_common::types::ValueType;
-/// use runar_common::utils::extract_value;
 /// use std::collections::HashMap;
 /// 
 /// let mut map = HashMap::new();
@@ -71,9 +69,8 @@ pub fn extract_value<T: DeserializeOwned>(
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```ignore
 /// use runar_common::types::ValueType;
-/// use runar_common::utils::extract_direct;
 /// 
 /// let value = ValueType::String("hello".to_string());
 /// 

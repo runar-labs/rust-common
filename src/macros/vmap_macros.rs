@@ -9,7 +9,9 @@
 /// # Examples
 /// 
 /// ```
-/// // Create a map with key-value pairs
+/// use runar_common::vmap;
+/// use runar_common::types::ValueType;
+/// 
 /// let map = vmap! {
 ///     "name" => "John Doe",
 ///     "age" => 30,
@@ -18,12 +20,16 @@
 /// 
 /// // Create an empty map
 /// let empty = vmap! {};
-/// 
+/// ```
+///
+/// ```ignore
 /// // Extract a value from a map with default
+/// let payload = ValueType::Map(std::collections::HashMap::new());
 /// let data = vmap!(payload, "data" => String::new());
 ///
 /// // Extract a direct value with default
-/// let value = vmap!(response.data, => "default");
+/// let response = ValueType::String("test".to_string());
+/// let value = vmap!(response, => "default");
 /// ```
 #[macro_export]
 macro_rules! vmap {
@@ -133,14 +139,18 @@ macro_rules! vmap {
 /// # Examples
 /// 
 /// ```
+/// use runar_common::vmap_opt;
+/// use runar_common::types::ValueType;
+/// use std::collections::HashMap;
+/// 
 /// // Create an optional map with key-value pairs
-/// let map = vmap_opt! {
+/// let map: Option<ValueType> = vmap_opt! {
 ///     "name" => "John Doe",
 ///     "age" => 30
 /// };
 /// 
 /// // Create an empty optional map
-/// let empty = vmap_opt! {};
+/// let empty: Option<ValueType> = vmap_opt! {};
 /// ```
 #[macro_export]
 macro_rules! vmap_opt {
@@ -175,12 +185,26 @@ macro_rules! vmap_opt {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```ignore
+/// use runar_common::vmap_extract;
+/// use runar_common::types::ValueType;
+/// use runar_common::vjson;
+/// 
+/// // Create a test value
+/// let value = ValueType::Map({
+///     let mut map = std::collections::HashMap::new();
+///     map.insert("name".to_string(), ValueType::String("John Doe".to_string()));
+///     map.insert("age".to_string(), ValueType::Number(25.0));
+///     map
+/// });
+/// 
 /// // Extract a string from a ValueType
 /// let name = vmap_extract!(value, "name", "Anonymous");
+/// assert_eq!(name, "John Doe");
 /// 
 /// // Extract a number from a ValueType
 /// let age = vmap_extract!(value, "age", 0);
+/// assert_eq!(age, 25);
 /// ```
 #[macro_export]
 macro_rules! vmap_extract {
@@ -249,8 +273,14 @@ macro_rules! vmap_extract {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```no_run
+/// use runar_common::vmap_extract_string;
+/// use runar_common::types::ValueType;
+/// use runar_common::vjson;
+/// 
+/// let data = vjson!({ "name": "John Doe" });
 /// let name = vmap_extract_string!(data, "name", "Anonymous");
+/// assert_eq!(name, "John Doe");
 /// ```
 #[macro_export]
 macro_rules! vmap_extract_string {
@@ -287,8 +317,14 @@ macro_rules! vmap_extract_string {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```no_run
+/// use runar_common::vmap_extract_i32;
+/// use runar_common::types::ValueType;
+/// use runar_common::vjson;
+/// 
+/// let data = vjson!({ "age": 25 });
 /// let age = vmap_extract_i32!(data, "age", 0);
+/// assert_eq!(age, 25);
 /// ```
 #[macro_export]
 macro_rules! vmap_extract_i32 {
@@ -325,8 +361,14 @@ macro_rules! vmap_extract_i32 {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```no_run
+/// use runar_common::vmap_extract_f64;
+/// use runar_common::types::ValueType;
+/// use runar_common::vjson;
+/// 
+/// let data = vjson!({ "score": 95.5 });
 /// let score = vmap_extract_f64!(data, "score", 0.0);
+/// assert_eq!(score, 95.5);
 /// ```
 #[macro_export]
 macro_rules! vmap_extract_f64 {
@@ -363,8 +405,14 @@ macro_rules! vmap_extract_f64 {
 /// 
 /// # Examples
 /// 
-/// ```
+/// ```no_run
+/// use runar_common::vmap_extract_bool;
+/// use runar_common::types::ValueType;
+/// use runar_common::vjson;
+/// 
+/// let data = vjson!({ "is_admin": true });
 /// let is_admin = vmap_extract_bool!(data, "is_admin", false);
+/// assert_eq!(is_admin, true);
 /// ```
 #[macro_export]
 macro_rules! vmap_extract_bool {

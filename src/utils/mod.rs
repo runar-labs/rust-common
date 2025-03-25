@@ -3,7 +3,11 @@
 // Common utility functions and helpers
 
 // Value converters and extractors
-mod value_converters;
+pub mod value_converters;
+
+// Logging utilities
+pub mod logging;
 
 // Re-export everything from submodules
 pub use value_converters::*;
+pub use logging::*;
