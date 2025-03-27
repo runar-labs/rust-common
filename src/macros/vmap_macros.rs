@@ -132,52 +132,6 @@ macro_rules! vmap {
     };
 }
 
-/// Create an optional HashMap with ValueType values
-/// 
-/// This macro is similar to `vmap!` but wraps the result in Some().
-/// 
-/// # Examples
-/// 
-/// ```
-/// use runar_common::vmap_opt;
-/// use runar_common::types::ValueType;
-/// use std::collections::HashMap;
-/// 
-/// // Create an optional map with key-value pairs
-/// let map: Option<ValueType> = vmap_opt! {
-///     "name" => "John Doe",
-///     "age" => 30
-/// };
-/// 
-/// // Create an empty optional map
-/// let empty: Option<ValueType> = vmap_opt! {};
-/// ```
-#[macro_export]
-macro_rules! vmap_opt {
-    // Empty map
-    {} => {
-        {
-            use std::collections::HashMap;
-            use $crate::types::ValueType;
-            let map: HashMap<String, ValueType> = HashMap::new();
-            None
-        }
-    };
-    
-    // Map with key-value pairs
-    { $($key:expr => $value:expr),* $(,)? } => {
-        {
-            use std::collections::HashMap;
-            use $crate::types::ValueType;
-            let mut map = HashMap::new();
-            $(
-                map.insert($key.to_string(), ValueType::from($value));
-            )*
-            Some(ValueType::Map(map))
-        }
-    };
-}
-
 /// Extract values from ValueType with defaults
 /// 
 /// This macro allows extracting values from a ValueType with default values

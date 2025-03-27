@@ -1150,3 +1150,7 @@ macro_rules! vmap_vec {
         }
     };
 }
+
+// NOTE: The vmap_opt macro has been removed. 
+// Use None instead of vmap_opt! {} 
+// Use Some(vmap! { key => value }) instead of vmap_opt! { key => value }
