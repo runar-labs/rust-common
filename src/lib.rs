@@ -7,6 +7,7 @@ pub mod service_info;
 pub mod macros;
 pub mod utils;
 pub mod types;
+pub mod errors;
 
 // Re-export traits and types at the root level
 pub use service_info::ServiceInfo;

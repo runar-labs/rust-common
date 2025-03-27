@@ -3,7 +3,9 @@
 // Utility functions for converting between ValueType and other types
 
 use serde::de::DeserializeOwned;
+use serde::Serialize;
 use serde_json;
+use std::collections::HashMap;
 
 use crate::types::ValueType;
 
@@ -83,4 +85,66 @@ pub fn extract_value<T: DeserializeOwned>(
 /// ```
 pub fn extract_direct<T: DeserializeOwned>(value: &ValueType, default: T) -> T {
     value_to_type(value, default)
+}
+
+/// Helper function to convert any serializable value to ValueType
+/// 
+/// # Examples
+/// 
+/// ```ignore
+/// use runar_common::types::{ValueType, SerializableStruct};
+/// use runar_common::utils::to_value_type;
+/// use std::collections::HashMap;
+/// 
+/// #[derive(serde::Serialize)]
+/// struct User {
+///     name: String,
+///     age: i32,
+/// }
+/// 
+/// let user = User { 
+///     name: "Alice".to_string(), 
+///     age: 30 
+/// };
+/// 
+/// let value = to_value_type(user);
+/// assert!(matches!(value, ValueType::Json(_)));
+/// ```
+pub fn to_value_type<T: serde::Serialize>(value: T) -> crate::types::ValueType {
+    // Convert the value to a JSON Value first
+    let json_value = match serde_json::to_value(&value) {
+        Ok(v) => v,
+        Err(_) => return crate::types::ValueType::Null,
+    };
+    
+    // Then convert to ValueType
+    match json_value {
+        serde_json::Value::Null => crate::types::ValueType::Null,
+        serde_json::Value::Bool(b) => crate::types::ValueType::Bool(b),
+        serde_json::Value::Number(n) => {
+            if let Some(f) = n.as_f64() {
+                crate::types::ValueType::Number(f)
+            } else {
+                crate::types::ValueType::Null
+            }
+        },
+        serde_json::Value::String(s) => crate::types::ValueType::String(s),
+        serde_json::Value::Array(arr) => {
+            let values: Vec<crate::types::ValueType> = arr.into_iter()
+                .map(|v| {
+                    // For each element, convert from JSON to ValueType
+                    crate::types::ValueType::from_json(v)
+                })
+                .collect();
+            crate::types::ValueType::Array(values)
+        },
+        serde_json::Value::Object(obj) => {
+            let mut map = std::collections::HashMap::new();
+            for (k, v) in obj {
+                // For each value in the object, convert from JSON to ValueType
+                map.insert(k, crate::types::ValueType::from_json(v));
+            }
+            crate::types::ValueType::Map(map)
+        },
+    }
 }
