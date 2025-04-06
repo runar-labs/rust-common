@@ -5,6 +5,7 @@
 // - Component-based structured logging
 // - Context-aware logging for services
 // - Node ID tracking through logger inheritance
+// - Support for action and event path tracing
 
 use log::{debug, error, info, warn};
 
@@ -47,6 +48,10 @@ pub struct Logger {
     node_id: String,
     /// Parent component for hierarchical logging (if any)
     parent_component: Option<Component>,
+    /// Action path for request/action tracing
+    action_path: Option<String>,
+    /// Event path for event subscription tracing
+    event_path: Option<String>,
 }
 
 impl Logger {
@@ -57,6 +62,8 @@ impl Logger {
             component,
             node_id: node_id.to_string(),
             parent_component: None,
+            action_path: None,
+            event_path: None,
         }
     }
     
@@ -67,6 +74,32 @@ impl Logger {
             component,
             node_id: self.node_id.clone(),
             parent_component: Some(self.component),
+            action_path: self.action_path.clone(),
+            event_path: self.event_path.clone(),
+        }
+    }
+    
+    /// Create a logger with an action path
+    /// This is used to track action requests through the system
+    pub fn with_action_path(&self, path: impl Into<String>) -> Self {
+        Self {
+            component: self.component,
+            node_id: self.node_id.clone(),
+            parent_component: self.parent_component,
+            action_path: Some(path.into()),
+            event_path: self.event_path.clone(),
+        }
+    }
+    
+    /// Create a logger with an event path
+    /// This is used to track event publications and subscriptions
+    pub fn with_event_path(&self, path: impl Into<String>) -> Self {
+        Self {
+            component: self.component,
+            node_id: self.node_id.clone(),
+            parent_component: self.parent_component,
+            action_path: self.action_path.clone(),
+            event_path: Some(path.into()),
         }
     }
     
@@ -81,6 +114,16 @@ impl Logger {
         &self.node_id
     }
     
+    /// Get a reference to the action path if available
+    pub fn action_path(&self) -> Option<&str> {
+        self.action_path.as_deref()
+    }
+    
+    /// Get a reference to the event path if available
+    pub fn event_path(&self) -> Option<&str> {
+        self.event_path.as_deref()
+    }
+    
     /// Get the component prefix for logging, including parent if available
     fn component_prefix(&self) -> String {
         match self.parent_component {
@@ -90,31 +133,51 @@ impl Logger {
         }
     }
     
+    /// Get the full prefix including component, action path, and event path
+    fn full_prefix(&self) -> String {
+        let mut parts = Vec::new();
+        
+        // Add component prefix
+        parts.push(self.component_prefix());
+        
+        // Add action path if available
+        if let Some(path) = &self.action_path {
+            parts.push(format!("action={}", path));
+        }
+        
+        // Add event path if available
+        if let Some(path) = &self.event_path {
+            parts.push(format!("event={}", path));
+        }
+        
+        parts.join("|")
+    }
+    
     /// Log a debug message
     pub fn debug(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Debug) {
-            debug!("[{}][{}] {}", self.node_id, self.component_prefix(), message.into());
+            debug!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
         }
     }
     
     /// Log an info message
     pub fn info(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Info) {
-            info!("[{}][{}] {}", self.node_id, self.component_prefix(), message.into());
+            info!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
         }
     }
     
     /// Log a warning message
     pub fn warn(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Warn) {
-            warn!("[{}][{}] {}", self.node_id, self.component_prefix(), message.into());
+            warn!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
         }
     }
     
     /// Log an error message
     pub fn error(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Error) {
-            error!("[{}][{}] {}", self.node_id, self.component_prefix(), message.into());
+            error!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
         }
     }
 }
@@ -126,6 +189,16 @@ pub trait LoggingContext {
     
     /// Get the service path or identifier
     fn service_path(&self) -> Option<&str>;
+    
+    /// Get the action path if available
+    fn action_path(&self) -> Option<&str> {
+        None
+    }
+    
+    /// Get the event path if available
+    fn event_path(&self) -> Option<&str> {
+        None
+    }
     
     /// Get the logger
     fn logger(&self) -> &Logger;
@@ -168,9 +241,24 @@ pub trait LoggingContext {
     
     /// Get the logging prefix
     fn log_prefix(&self) -> String {
+        let mut parts = Vec::new();
+        
+        // Add component and service path
         match self.service_path() {
-            Some(path) => format!("{}:{}", self.component().as_str(), path),
-            None => self.component().as_str().to_string(),
+            Some(path) => parts.push(format!("{}:{}", self.component().as_str(), path)),
+            None => parts.push(self.component().as_str().to_string()),
         }
+        
+        // Add action path if available
+        if let Some(path) = self.action_path() {
+            parts.push(format!("action={}", path));
+        }
+        
+        // Add event path if available
+        if let Some(path) = self.event_path() {
+            parts.push(format!("event={}", path));
+        }
+        
+        parts.join("|")
     }
 } 
