@@ -35,6 +35,27 @@ pub enum ValueType {
     Struct(Arc<dyn SerializableStruct + Send + Sync + 'static>),
 }
 
+// Manual implementation of PartialEq for ValueType
+// This avoids the issue with comparing the Struct variant's Arc<dyn ...>
+impl PartialEq for ValueType {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (ValueType::Json(a), ValueType::Json(b)) => a == b,
+            (ValueType::Map(a), ValueType::Map(b)) => a == b,
+            (ValueType::Array(a), ValueType::Array(b)) => a == b,
+            (ValueType::String(a), ValueType::String(b)) => a == b,
+            (ValueType::Number(a), ValueType::Number(b)) => a == b,
+            (ValueType::Bool(a), ValueType::Bool(b)) => a == b,
+            (ValueType::Null, ValueType::Null) => true,
+            (ValueType::Bytes(a), ValueType::Bytes(b)) => a == b,
+            // Treat Struct variants as unequal for now
+            (ValueType::Struct(_), ValueType::Struct(_)) => false, 
+            // All other combinations are unequal
+            _ => false,
+        }
+    }
+}
+
 /// Trait for types that can be stored in a ValueType::Struct
 pub trait SerializableStruct: std::fmt::Debug {
     /// Convert to a HashMap representation
