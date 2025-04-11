@@ -156,28 +156,48 @@ impl Logger {
     /// Log a debug message
     pub fn debug(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Debug) {
-            debug!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component == Component::Node && self.parent_component.is_none() {
+                debug!("[{}] {}", self.node_id, message.into());
+            } else {
+                debug!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            }
         }
     }
     
     /// Log an info message
     pub fn info(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Info) {
-            info!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component == Component::Node && self.parent_component.is_none() {
+                info!("[{}] {}", self.node_id, message.into());
+            } else {
+                info!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            }
         }
     }
     
     /// Log a warning message
     pub fn warn(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Warn) {
-            warn!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component == Component::Node && self.parent_component.is_none() {
+                warn!("[{}] {}", self.node_id, message.into());
+            } else {
+                warn!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            }
         }
     }
     
     /// Log an error message
     pub fn error(&self, message: impl Into<String>) {
         if log::log_enabled!(log::Level::Error) {
-            error!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component == Component::Node && self.parent_component.is_none() {
+                error!("[{}] {}", self.node_id, message.into());
+            } else {
+                error!("[{}][{}] {}", self.node_id, self.full_prefix(), message.into());
+            }
         }
     }
 }
@@ -208,7 +228,13 @@ pub trait LoggingContext {
         if log::log_enabled!(log::Level::Debug) {
             let prefix = self.log_prefix();
             let logger = self.logger();
-            debug!("[{}][{}] {}", logger.node_id(), prefix, message);
+            
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component() == Component::Node && prefix == "Node" {
+                debug!("[{}] {}", logger.node_id(), message);
+            } else {
+                debug!("[{}][{}] {}", logger.node_id(), prefix, message);
+            }
         }
     }
     
@@ -217,7 +243,13 @@ pub trait LoggingContext {
         if log::log_enabled!(log::Level::Info) {
             let prefix = self.log_prefix();
             let logger = self.logger();
-            info!("[{}][{}] {}", logger.node_id(), prefix, message);
+            
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component() == Component::Node && prefix == "Node" {
+                info!("[{}] {}", logger.node_id(), message);
+            } else {
+                info!("[{}][{}] {}", logger.node_id(), prefix, message);
+            }
         }
     }
     
@@ -226,7 +258,13 @@ pub trait LoggingContext {
         if log::log_enabled!(log::Level::Warn) {
             let prefix = self.log_prefix();
             let logger = self.logger();
-            warn!("[{}][{}] {}", logger.node_id(), prefix, message);
+            
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component() == Component::Node && prefix == "Node" {
+                warn!("[{}] {}", logger.node_id(), message);
+            } else {
+                warn!("[{}][{}] {}", logger.node_id(), prefix, message);
+            }
         }
     }
     
@@ -235,7 +273,13 @@ pub trait LoggingContext {
         if log::log_enabled!(log::Level::Error) {
             let prefix = self.log_prefix();
             let logger = self.logger();
-            error!("[{}][{}] {}", logger.node_id(), prefix, message);
+            
+            // Skip displaying the component if it's Node to avoid redundancy
+            if self.component() == Component::Node && prefix == "Node" {
+                error!("[{}] {}", logger.node_id(), message);
+            } else {
+                error!("[{}][{}] {}", logger.node_id(), prefix, message);
+            }
         }
     }
     
