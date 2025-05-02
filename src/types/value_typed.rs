@@ -111,6 +111,10 @@ pub trait ValueConvert {
     /// Convert to a list
     fn as_list<U: 'static + Clone + Send + Sync>(&self) -> Result<Vec<U>>;
     
+    /// Convert to a list with direct deserialization (when U implements Deserialize)
+    fn as_list_deserializable<U>(&self) -> Result<Vec<U>>
+    where U: 'static + Clone + Send + Sync + for<'a> Deserialize<'a>;
+    
     /// Type-safe conversion using Rust's type system
     fn try_into<U: 'static>(&self) -> Result<U>
         where U: TryFrom<Box<dyn Any>>;
@@ -400,27 +404,27 @@ impl<T: 'static + Clone + Send + Sync + for<'a> Deserialize<'a> + Debug> ValueCo
                     Err(anyhow!("Type mismatch: cannot convert list of {:?} to list of requested type", std::any::type_name::<T>()))
                 }
             },
+            Value::Bytes(_) => {
+                // For bytes, defer to the deserializable version if possible, otherwise return error
+                Err(anyhow!("Cannot deserialize bytes to Vec<U> unless U implements Deserialize - use as_list_deserializable instead"))
+            },
+            _ => Err(anyhow!("Not a list: {:?}", self)),
+        }
+    }
+    
+    fn as_list_deserializable<U>(&self) -> Result<Vec<U>>
+    where U: 'static + Clone + Send + Sync + for<'a> Deserialize<'a> {
+        match self {
+            Value::List(values) => {
+                // For lists, use the standard conversion
+                self.as_list::<U>()
+            },
             Value::Bytes(typed_bytes) => {
-                // For bytes, we need to check if it contains a list of T
+                // For bytes, we can deserialize directly to Vec<U> since U implements Deserialize
                 if let TypeInfo::List(_) = &typed_bytes.type_info {
-                    // First deserialize as Vec<T>
-                    match bincode::deserialize::<Vec<T>>(&typed_bytes.bytes) {
-                        Ok(list_t) => {
-                            // Then convert Vec<T> to Vec<U> if types match
-                            if std::any::TypeId::of::<T>() == std::any::TypeId::of::<U>() {
-                                let mut result = Vec::with_capacity(list_t.len());
-                                for value in &list_t {
-                                    let ptr = value as *const T as *const U;
-                                    let ref_u = unsafe { &*ptr };
-                                    result.push(ref_u.clone());
-                                }
-                                Ok(result)
-                            } else {
-                                Err(anyhow!("Type mismatch: cannot convert list of {:?} to list of requested type", std::any::type_name::<T>()))
-                            }
-                        },
-                        Err(e) => Err(anyhow!("Failed to deserialize TypedBytes as Vec<T>: {}", e))
-                    }
+                    // Direct deserialization when U implements Deserialize
+                    bincode::deserialize::<Vec<U>>(&typed_bytes.bytes)
+                        .map_err(|e| anyhow!("Deserialization error: {}", e))
                 } else {
                     Err(anyhow!("TypedBytes does not contain a list"))
                 }
@@ -624,6 +628,11 @@ impl<K: 'static + Clone + Send + Sync + Eq + std::hash::Hash + for<'a> Deseriali
     }
     
     fn as_list<U: 'static + Clone + Send + Sync>(&self) -> Result<Vec<U>> {
+        Err(anyhow!("MapValue<K, V> does not directly convert to lists"))
+    }
+    
+    fn as_list_deserializable<U>(&self) -> Result<Vec<U>>
+    where U: 'static + Clone + Send + Sync + for<'a> Deserialize<'a> {
         Err(anyhow!("MapValue<K, V> does not directly convert to lists"))
     }
     
