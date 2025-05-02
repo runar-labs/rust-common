@@ -20,6 +20,7 @@ pub enum Component {
     Service,
     Database,
     Network,
+    NetworkDiscovery,
     System,
     Custom(&'static str),
 }
@@ -33,6 +34,7 @@ impl Component {
             Component::Service => "Service",
             Component::Database => "DB",
             Component::Network => "Network",
+            Component::NetworkDiscovery => "NetworkDiscovery",
             Component::System => "System",
             Component::Custom(name) => name,
         }
