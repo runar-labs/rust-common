@@ -249,8 +249,28 @@ fn test_chained_operations() -> Result<()> {
     person_map.insert("name".to_string(), "Alice".to_string());
     person_map.insert("email".to_string(), "alice@example.com".to_string());
 
+    let mut age_map = HashMap::new();
+    age_map.insert("alice@example.com".to_string(), 35);
+    age_map.insert("john@example.com".to_string(), 45);
+
     // Create a MapValue
     let typed_map = TypedValue::from_map(person_map.clone());
+    let typed_age_map = TypedValue::from_map(age_map.clone());
+
+    // check in memory access (no serialization)
+    let person_map_from_memory: HashMap<String, String> = typed_map.as_map()?;
+    assert_eq!(
+        person_map_from_memory.get("name"),
+        Some(&"Alice".to_string())
+    );
+    assert_eq!(
+        person_map_from_memory.get("email"),
+        Some(&"alice@example.com".to_string())
+    );
+
+    let age_map_from_memory: HashMap<String, i32> = typed_age_map.as_map()?;
+    assert_eq!(age_map_from_memory.get("alice@example.com"), Some(&35));
+    assert_eq!(age_map_from_memory.get("john@example.com"), Some(&45));
 
     // Serialize and deserialize
     let bytes = typed_map.to_bytes()?;
@@ -259,6 +279,15 @@ fn test_chained_operations() -> Result<()> {
     // Extract
     let extracted_map: HashMap<String, String> = typed_map.as_map()?;
     assert_eq!(extracted_map.get("name"), Some(&"Alice".to_string()));
+
+    // Serialize and deserialize
+    let bytes = typed_age_map.to_bytes()?;
+    let typed_age_map = runar_common::types::value_from_bytes(&bytes)?;
+
+    // Extract
+    let extracted_age_map: HashMap<String, i32> = typed_age_map.as_map()?;
+    assert_eq!(extracted_age_map.get("alice@example.com"), Some(&35));
+    assert_eq!(extracted_age_map.get("john@example.com"), Some(&45));
 
     // Test multiple layers of serialization/deserialization
     let re_serialized = typed_map.to_bytes()?;
