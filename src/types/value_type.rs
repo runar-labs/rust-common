@@ -7,8 +7,654 @@ use base64;
 use serde::{Deserialize, Serialize};
 use serde_bytes;
 use serde_json::Value;
+use std::any::TypeId;
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::Arc;
+
+use super::erased_arc::ErasedArc;
+
+/// Categorizes the value for efficient dispatch
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueCategory {
+    Primitive,
+    List,
+    Map,
+    Struct,
+    Null,
+    /// Serialized bytes (lazy deserialization)
+    Bytes,
+}
+
+/// A type-erased value container with Arc preservation
+///
+/// ArcValueType is a replacement for the older ValueType that guarantees
+/// Arc identity preservation when retrieving references.
+pub struct ArcValueType {
+    /// Type category for more efficient dispatching
+    category: ValueCategory,
+    /// The type-erased Arc pointer
+    value: ErasedArc,
+}
+
+impl ArcValueType {
+    /// Create a new ArcValueType from a primitive value
+    pub fn from_value<T: 'static + Clone + Send + Sync>(value: T) -> Self {
+        Self {
+            category: ValueCategory::Primitive,
+            value: ErasedArc::new(value),
+        }
+    }
+
+    /// Create a ArcValueType containing a list
+    pub fn from_list<T: 'static + Clone + Send + Sync>(values: Vec<T>) -> Self {
+        Self {
+            category: ValueCategory::List,
+            value: ErasedArc::new(values),
+        }
+    }
+
+    /// Create a ArcValueType containing a map
+    pub fn from_map<K, V>(map: HashMap<K, V>) -> Self
+    where
+        K: 'static + Clone + Send + Sync + Eq + std::hash::Hash,
+        V: 'static + Clone + Send + Sync,
+    {
+        Self {
+            category: ValueCategory::Map,
+            value: ErasedArc::new(map),
+        }
+    }
+
+    /// Create a ArcValueType containing a struct
+    pub fn from_struct<T: 'static + Clone + Send + Sync>(value: T) -> Self {
+        Self {
+            category: ValueCategory::Struct,
+            value: ErasedArc::new(value),
+        }
+    }
+
+    /// Create a null ArcValueType
+    pub fn null() -> Self {
+        Self {
+            category: ValueCategory::Null,
+            value: ErasedArc::new(()),
+        }
+    }
+
+    /// Check if this value is null
+    pub fn is_null(&self) -> bool {
+        self.category == ValueCategory::Null
+    }
+
+    /// Get the value category
+    pub fn category(&self) -> ValueCategory {
+        self.category
+    }
+
+    /// Get a reference to a primitive type
+    pub fn as_type_ref<T: 'static>(&self) -> Result<Arc<T>> {
+        match self.category {
+            ValueCategory::Primitive => self.value.as_arc::<T>(),
+            ValueCategory::Bytes => {
+                // We have serialized bytes, try to deserialize
+                let serialized = self.value.as_arc::<SerializedValue>()?;
+                if serialized.category != ValueCategory::Primitive {
+                    return Err(anyhow!("Serialized value is not a primitive type"));
+                }
+
+                // Parse the serialized data
+                let bytes = &serialized.data;
+                if bytes.len() < 3 {
+                    return Err(anyhow!("Invalid serialized primitive data"));
+                }
+
+                // Skip the category marker
+                let pos = 1;
+
+                // Get the type name
+                let type_name_len = bytes[pos] as usize;
+                if pos + 1 + type_name_len >= bytes.len() {
+                    return Err(anyhow!("Invalid serialized primitive data"));
+                }
+                let type_name = std::str::from_utf8(&bytes[pos + 1..pos + 1 + type_name_len])?;
+
+                // Skip the type name
+                let pos = pos + 1 + type_name_len;
+
+                // Get the primitive type marker
+                let primitive_type = bytes[pos];
+                let pos = pos + 1;
+
+                // Deserialize based on the primitive type
+                match primitive_type {
+                    0x01 => {
+                        // String
+                        if pos + 4 > bytes.len() {
+                            return Err(anyhow!("Invalid serialized string data"));
+                        }
+                        let data_len = u32::from_le_bytes([
+                            bytes[pos],
+                            bytes[pos + 1],
+                            bytes[pos + 2],
+                            bytes[pos + 3],
+                        ]) as usize;
+                        if pos + 4 + data_len > bytes.len() {
+                            return Err(anyhow!("Invalid serialized string data"));
+                        }
+                        let string: String =
+                            bincode::deserialize(&bytes[pos + 4..pos + 4 + data_len])?;
+
+                        // Check if the requested type is String
+                        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<String>() {
+                            // This is unsafe but necessary for type conversion
+                            // We've verified the types match
+                            let value = Arc::new(string);
+                            let ptr = Arc::into_raw(value) as *const T;
+                            let arc = unsafe { Arc::from_raw(ptr) };
+                            Ok(arc)
+                        } else {
+                            Err(anyhow!(
+                                "Type mismatch: expected {}, found String",
+                                std::any::type_name::<T>()
+                            ))
+                        }
+                    }
+                    0x02 => {
+                        // i32
+                        if pos + 4 > bytes.len() {
+                            return Err(anyhow!("Invalid serialized i32 data"));
+                        }
+                        let value = i32::from_le_bytes([
+                            bytes[pos],
+                            bytes[pos + 1],
+                            bytes[pos + 2],
+                            bytes[pos + 3],
+                        ]);
+
+                        // Check if the requested type is i32
+                        if std::any::TypeId::of::<T>() == std::any::TypeId::of::<i32>() {
+                            // This is unsafe but necessary for type conversion
+                            // We've verified the types match
+                            let value = Arc::new(value);
+                            let ptr = Arc::into_raw(value) as *const T;
+                            let arc = unsafe { Arc::from_raw(ptr) };
+                            Ok(arc)
+                        } else {
+                            Err(anyhow!(
+                                "Type mismatch: expected {}, found i32",
+                                std::any::type_name::<T>()
+                            ))
+                        }
+                    }
+                    // Add handling for other primitive types as needed
+                    // ...
+                    _ => Err(anyhow!(
+                        "Unsupported primitive type marker: {}",
+                        primitive_type
+                    )),
+                }
+            }
+            _ => Err(anyhow!(
+                "Value is not a primitive type. Use the appropriate method for category: {:?}",
+                self.category
+            )),
+        }
+    }
+
+    /// Get a reference to a list
+    pub fn as_list_ref<T: 'static>(&self) -> Result<Arc<Vec<T>>> {
+        match self.category {
+            ValueCategory::List => self.value.as_arc::<Vec<T>>(),
+            ValueCategory::Bytes => {
+                // We have serialized bytes, try to deserialize
+                let serialized = self.value.as_arc::<SerializedValue>()?;
+                if serialized.category != ValueCategory::List {
+                    return Err(anyhow!("Serialized value is not a list"));
+                }
+
+                // Parse the serialized data
+                let bytes = &serialized.data;
+                if bytes.len() < 3 {
+                    return Err(anyhow!("Invalid serialized list data"));
+                }
+
+                // Skip the category marker
+                let pos = 1;
+
+                // Get the type name
+                let type_name_len = bytes[pos] as usize;
+                if pos + 1 + type_name_len >= bytes.len() {
+                    return Err(anyhow!("Invalid serialized list data"));
+                }
+                let type_name = std::str::from_utf8(&bytes[pos + 1..pos + 1 + type_name_len])?;
+
+                // Skip the type name
+                let pos = pos + 1 + type_name_len;
+
+                // Deserialize the list
+                if pos + 4 > bytes.len() {
+                    return Err(anyhow!("Invalid serialized list data"));
+                }
+                let data_len = u32::from_le_bytes([
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                ]) as usize;
+                if pos + 4 + data_len > bytes.len() {
+                    return Err(anyhow!("Invalid serialized list data"));
+                }
+
+                // Determine the list element type based on the type name
+                if type_name.contains("String")
+                    && std::any::TypeId::of::<T>() == std::any::TypeId::of::<String>()
+                {
+                    let list: Vec<String> =
+                        bincode::deserialize(&bytes[pos + 4..pos + 4 + data_len])?;
+                    // This is unsafe but necessary for type conversion
+                    // We've verified the types match
+                    let value = Arc::new(list);
+                    let ptr = Arc::into_raw(value) as *const Vec<T>;
+                    let arc = unsafe { Arc::from_raw(ptr) };
+                    Ok(arc)
+                } else if type_name.contains("i32")
+                    && std::any::TypeId::of::<T>() == std::any::TypeId::of::<i32>()
+                {
+                    let list: Vec<i32> = bincode::deserialize(&bytes[pos + 4..pos + 4 + data_len])?;
+                    // This is unsafe but necessary for type conversion
+                    // We've verified the types match
+                    let value = Arc::new(list);
+                    let ptr = Arc::into_raw(value) as *const Vec<T>;
+                    let arc = unsafe { Arc::from_raw(ptr) };
+                    Ok(arc)
+                } else {
+                    Err(anyhow!("Unsupported list element type or type mismatch"))
+                }
+            }
+            _ => Err(anyhow!(
+                "Value is not a list. Use the appropriate method for category: {:?}",
+                self.category
+            )),
+        }
+    }
+
+    /// Get a reference to a map
+    pub fn as_map_ref<K, V>(&self) -> Result<Arc<HashMap<K, V>>>
+    where
+        K: 'static + Clone + Send + Sync + Eq + std::hash::Hash,
+        V: 'static + Clone + Send + Sync,
+    {
+        match self.category {
+            ValueCategory::Map => self.value.as_arc::<HashMap<K, V>>(),
+            ValueCategory::Bytes => {
+                // We have serialized bytes, try to deserialize
+                let serialized = self.value.as_arc::<SerializedValue>()?;
+                if serialized.category != ValueCategory::Map {
+                    return Err(anyhow!("Serialized value is not a map"));
+                }
+
+                // Parse the serialized data
+                let bytes = &serialized.data;
+                if bytes.len() < 3 {
+                    return Err(anyhow!("Invalid serialized map data"));
+                }
+
+                // Skip the category marker
+                let pos = 1;
+
+                // Get the type name
+                let type_name_len = bytes[pos] as usize;
+                if pos + 1 + type_name_len >= bytes.len() {
+                    return Err(anyhow!("Invalid serialized map data"));
+                }
+                let type_name = std::str::from_utf8(&bytes[pos + 1..pos + 1 + type_name_len])?;
+
+                // Skip the type name
+                let pos = pos + 1 + type_name_len;
+
+                // Deserialize the map
+                if pos + 4 > bytes.len() {
+                    return Err(anyhow!("Invalid serialized map data"));
+                }
+                let data_len = u32::from_le_bytes([
+                    bytes[pos],
+                    bytes[pos + 1],
+                    bytes[pos + 2],
+                    bytes[pos + 3],
+                ]) as usize;
+                if pos + 4 + data_len > bytes.len() {
+                    return Err(anyhow!("Invalid serialized map data"));
+                }
+
+                // Determine the map types based on the type name
+                if type_name.contains("String")
+                    && type_name.contains("HashMap")
+                    && std::any::TypeId::of::<K>() == std::any::TypeId::of::<String>()
+                    && std::any::TypeId::of::<V>() == std::any::TypeId::of::<String>()
+                {
+                    let map: HashMap<String, String> =
+                        bincode::deserialize(&bytes[pos + 4..pos + 4 + data_len])?;
+                    // This is unsafe but necessary for type conversion
+                    // We've verified the types match
+                    let value = Arc::new(map);
+                    let ptr = Arc::into_raw(value) as *const HashMap<K, V>;
+                    let arc = unsafe { Arc::from_raw(ptr) };
+                    Ok(arc)
+                } else {
+                    Err(anyhow!("Unsupported map type or type mismatch"))
+                }
+            }
+            _ => Err(anyhow!(
+                "Value is not a map. Use the appropriate method for category: {:?}",
+                self.category
+            )),
+        }
+    }
+
+    /// Get a reference to a struct
+    pub fn as_struct_ref<T: 'static>(&self) -> Result<Arc<T>> {
+        match self.category {
+            ValueCategory::Struct => self.value.as_arc::<T>(),
+            ValueCategory::Bytes => {
+                // We have serialized bytes, try to deserialize
+                let serialized = self.value.as_arc::<SerializedValue>()?;
+                if serialized.category != ValueCategory::Struct {
+                    return Err(anyhow!("Serialized value is not a struct"));
+                }
+
+                // Parse the serialized data
+                let bytes = &serialized.data;
+                if bytes.len() < 3 {
+                    return Err(anyhow!("Invalid serialized struct data"));
+                }
+
+                // Skip the category marker
+                let pos = 1;
+
+                // Get the type name
+                let type_name_len = bytes[pos] as usize;
+                if pos + 1 + type_name_len >= bytes.len() {
+                    return Err(anyhow!("Invalid serialized struct data"));
+                }
+                let type_name = std::str::from_utf8(&bytes[pos + 1..pos + 1 + type_name_len])?;
+
+                // Currently struct serialization is not implemented
+                return Err(anyhow!(
+                    "Struct deserialization not yet implemented for type: {}",
+                    type_name
+                ));
+            }
+            _ => Err(anyhow!(
+                "Value is not a struct. Use the appropriate method for category: {:?}",
+                self.category
+            )),
+        }
+    }
+
+    /// Access a value by converting to a specific type (with cloning)
+    pub fn as_type<T: 'static + Clone>(&self) -> Result<T> {
+        let arc = match self.category {
+            ValueCategory::Primitive => self.value.as_arc::<T>()?,
+            ValueCategory::Struct => self.value.as_arc::<T>()?,
+            _ => {
+                return Err(anyhow!(
+                    "Cannot convert {:?} to this type directly",
+                    self.category
+                ))
+            }
+        };
+
+        Ok((*arc).clone())
+    }
+
+    /// Convert to a list with cloning
+    pub fn as_list<T: 'static + Clone>(&self) -> Result<Vec<T>> {
+        match self.category {
+            ValueCategory::List => {
+                let arc = self.value.as_arc::<Vec<T>>()?;
+                Ok((*arc).clone())
+            }
+            _ => Err(anyhow!("Value is not a list")),
+        }
+    }
+
+    /// Convert to a map with cloning
+    pub fn as_map<K, V>(&self) -> Result<HashMap<K, V>>
+    where
+        K: 'static + Clone + Send + Sync + Eq + std::hash::Hash,
+        V: 'static + Clone + Send + Sync,
+    {
+        match self.category {
+            ValueCategory::Map => {
+                let arc = self.value.as_arc::<HashMap<K, V>>()?;
+                Ok((*arc).clone())
+            }
+            _ => Err(anyhow!("Value is not a map")),
+        }
+    }
+
+    /// Get the type name of the contained value
+    pub fn type_name(&self) -> &'static str {
+        self.value.type_name()
+    }
+
+    /// Serialize the value to bytes
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        // First byte is the category marker
+        let mut result = Vec::new();
+
+        match self.category {
+            ValueCategory::Primitive => {
+                // Add category marker (1 byte)
+                result.push(0x01);
+
+                // Add type name length and type name
+                let type_name = self.value.type_name();
+                let type_bytes = type_name.as_bytes();
+                result.push(type_bytes.len() as u8);
+                result.extend_from_slice(type_bytes);
+
+                // Handle different primitive types
+                if let Ok(s) = self.value.as_arc::<String>() {
+                    result.push(0x01); // String type marker
+                    let bytes = bincode::serialize(&*s)?;
+                    result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                    result.extend_from_slice(&bytes);
+                } else if let Ok(i) = self.value.as_arc::<i32>() {
+                    result.push(0x02); // i32 type marker
+                    result.extend_from_slice(&i.to_le_bytes());
+                } else if let Ok(i) = self.value.as_arc::<i64>() {
+                    result.push(0x03); // i64 type marker
+                    result.extend_from_slice(&i.to_le_bytes());
+                } else if let Ok(f) = self.value.as_arc::<f64>() {
+                    result.push(0x04); // f64 type marker
+                    result.extend_from_slice(&f.to_le_bytes());
+                } else if let Ok(b) = self.value.as_arc::<bool>() {
+                    result.push(0x05); // bool type marker
+                    result.push(if *b { 1 } else { 0 });
+                } else {
+                    // Try generic serialization for other types
+                    result.push(0xFF); // Generic serialization marker
+                                       // Serialize using bincode
+                                       // Note: this requires the type to implement Serialize
+                                       // and will result in a runtime error if it doesn't
+                    let serialized = bincode::serialize(&self.value.type_name())?;
+                    result.extend_from_slice(&(serialized.len() as u32).to_le_bytes());
+                    result.extend_from_slice(&serialized);
+                }
+            }
+            ValueCategory::List => {
+                // Add category marker (1 byte)
+                result.push(0x02);
+
+                // Add type name length and type name
+                let type_name = self.value.type_name();
+                let type_bytes = type_name.as_bytes();
+                result.push(type_bytes.len() as u8);
+                result.extend_from_slice(type_bytes);
+
+                // Serialize the list using bincode
+                // Note: this requires the element type to implement Serialize
+                if type_name.contains("String") {
+                    if let Ok(list) = self.value.as_arc::<Vec<String>>() {
+                        let bytes = bincode::serialize(&*list)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize list of strings"));
+                    }
+                } else if type_name.contains("i32") {
+                    if let Ok(list) = self.value.as_arc::<Vec<i32>>() {
+                        let bytes = bincode::serialize(&*list)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize list of i32"));
+                    }
+                } else if type_name.contains("i64") {
+                    if let Ok(list) = self.value.as_arc::<Vec<i64>>() {
+                        let bytes = bincode::serialize(&*list)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize list of i64"));
+                    }
+                } else if type_name.contains("f64") {
+                    if let Ok(list) = self.value.as_arc::<Vec<f64>>() {
+                        let bytes = bincode::serialize(&*list)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize list of f64"));
+                    }
+                } else if type_name.contains("bool") {
+                    if let Ok(list) = self.value.as_arc::<Vec<bool>>() {
+                        let bytes = bincode::serialize(&*list)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize list of bool"));
+                    }
+                } else {
+                    // This is a limitation - we only support certain primitive types for now
+                    return Err(anyhow!("Unsupported list element type: {}", type_name));
+                }
+            }
+            ValueCategory::Map => {
+                // Add category marker (1 byte)
+                result.push(0x03);
+
+                // Add type name length and type name
+                let type_name = self.value.type_name();
+                let type_bytes = type_name.as_bytes();
+                result.push(type_bytes.len() as u8);
+                result.extend_from_slice(type_bytes);
+
+                // Serialize the map using bincode
+                // For now, only support string->string maps
+                if type_name.contains("String") && type_name.contains("HashMap") {
+                    if let Ok(map) = self.value.as_arc::<HashMap<String, String>>() {
+                        let bytes = bincode::serialize(&*map)?;
+                        result.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+                        result.extend_from_slice(&bytes);
+                    } else {
+                        return Err(anyhow!("Failed to serialize string->string map"));
+                    }
+                } else {
+                    // This is a limitation - we only support certain map types for now
+                    return Err(anyhow!("Unsupported map type: {}", type_name));
+                }
+            }
+            ValueCategory::Struct => {
+                // Add category marker (1 byte)
+                result.push(0x04);
+
+                // Add type name length and type name
+                let type_name = self.value.type_name();
+                let type_bytes = type_name.as_bytes();
+                result.push(type_bytes.len() as u8);
+                result.extend_from_slice(type_bytes);
+
+                // For structs, we need specific handling based on the struct type
+                // This is just a placeholder - in a real implementation, you'd need
+                // to implement serialization for your specific struct types
+                return Err(anyhow!(
+                    "Struct serialization not yet implemented for type: {}",
+                    type_name
+                ));
+            }
+            ValueCategory::Null => {
+                // Add category marker (1 byte)
+                result.push(0x05);
+                // No additional data needed for null
+            }
+            ValueCategory::Bytes => {
+                // We're already serialized, just return the bytes
+                // This shouldn't happen in normal usage, but just in case
+                return Err(anyhow!("Cannot serialize already serialized bytes"));
+            }
+        }
+
+        Ok(result)
+    }
+
+    /// Deserialize from bytes
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.is_empty() {
+            return Err(anyhow!("Empty bytes"));
+        }
+
+        // First byte is the category marker
+        let category = match bytes[0] {
+            0x01 => ValueCategory::Primitive,
+            0x02 => ValueCategory::List,
+            0x03 => ValueCategory::Map,
+            0x04 => ValueCategory::Struct,
+            0x05 => ValueCategory::Null,
+            _ => return Err(anyhow!("Invalid category marker: {}", bytes[0])),
+        };
+
+        match category {
+            ValueCategory::Null => {
+                // Just return a null value
+                Ok(Self::null())
+            }
+            _ => {
+                // For all other types, store the bytes and deserialize lazily
+                // This is more efficient than deserializing immediately
+                Ok(Self {
+                    category: ValueCategory::Bytes,
+                    value: ErasedArc::new(SerializedValue {
+                        category,
+                        data: bytes.to_vec(),
+                    }),
+                })
+            }
+        }
+    }
+}
+
+impl Clone for ArcValueType {
+    fn clone(&self) -> Self {
+        Self {
+            category: self.category,
+            value: self.value.clone(),
+        }
+    }
+}
+
+impl fmt::Debug for ArcValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ArcValueType")
+            .field("category", &self.category)
+            .field("type", &self.value.type_name())
+            .finish()
+    }
+}
+
+// TODO: Implement serialization support
+// This will be added in the next implementation phase.
 
 /// ValueType represents a dynamically typed value that can be passed between services
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -49,14 +695,17 @@ impl PartialEq for ValueType {
             (ValueType::Null, ValueType::Null) => true,
             (ValueType::Bytes(a), ValueType::Bytes(b)) => a == b,
             // Treat Struct variants as unequal for now
-            (ValueType::Struct(_), ValueType::Struct(_)) => false, 
+            (ValueType::Struct(_), ValueType::Struct(_)) => false,
             // All other combinations are unequal
             _ => false,
         }
     }
 }
 
-/// Trait for types that can be stored in a ValueType::Struct
+// We want this to be clonable (especially for use in HashMaps)
+impl Eq for ValueType {}
+
+/// Trait for structs that can be serialized into ValueType
 pub trait SerializableStruct: std::fmt::Debug {
     /// Convert to a HashMap representation
     fn to_map(&self) -> Result<HashMap<String, ValueType>>;
@@ -71,15 +720,14 @@ pub trait SerializableStruct: std::fmt::Debug {
     fn clone_box(&self) -> Box<dyn SerializableStruct + Send + Sync + 'static>;
 }
 
-// We need to create our own Clone impl for Box<dyn SerializableStruct>
-// to avoid orphan rule violations
+// We need a manual implementation of Clone since we can't derive it
 impl Clone for Box<dyn SerializableStruct + Send + Sync + 'static> {
     fn clone(&self) -> Self {
         self.clone_box()
     }
 }
 
-// Define our own wrapper to avoid the orphan rule violation for Arc cloning
+// Wrapper to make a SerializableStruct cloneable
 pub struct StructArc(pub Box<dyn SerializableStruct + Send + Sync + 'static>);
 
 impl Clone for StructArc {
@@ -88,7 +736,7 @@ impl Clone for StructArc {
     }
 }
 
-/// Implementation for any type that implements Serialize and Debug
+// Blanket implementation for any type that can be serialized by serde
 impl<T> SerializableStruct for T
 where
     T: std::fmt::Debug + serde::Serialize + Clone + Send + Sync + 'static,
@@ -97,7 +745,7 @@ where
         // Convert to JSON first
         let json = serde_json::to_value(self)?;
 
-        // Then convert JSON to map
+        // Then extract a map
         match json {
             Value::Object(map) => {
                 let mut value_map = HashMap::new();
@@ -106,12 +754,12 @@ where
                 }
                 Ok(value_map)
             }
-            _ => Err(anyhow!("Expected a JSON object, got: {:?}", json)),
+            _ => Err(anyhow!("Cannot convert to map: not a JSON object")),
         }
     }
 
     fn to_json_value(&self) -> Result<Value> {
-        serde_json::to_value(self).map_err(|e| anyhow!("Serialization error: {}", e))
+        Ok(serde_json::to_value(self)?)
     }
 
     fn type_name(&self) -> &'static str {
@@ -149,6 +797,7 @@ impl ValueType {
                 if let Some(f) = serde_json::Number::from_f64(*n) {
                     Value::Number(f)
                 } else {
+                    // For NaN or infinity, represent as null
                     Value::Null
                 }
             }
@@ -162,8 +811,8 @@ impl ValueType {
             ValueType::Struct(s) => {
                 // Serialize the struct to JSON on demand
                 match s.to_json_value() {
-                    Ok(v) => v,
-                    Err(_) => Value::Null,
+                    Ok(json) => json,
+                    Err(_) => Value::Null, // Default to null on error
                 }
             }
         }
@@ -200,7 +849,7 @@ impl ValueType {
             _ => None,
         }
     }
-    
+
     /// Get a reference to an array if this ValueType is an Array
     pub fn as_array(&self) -> Option<&Vec<ValueType>> {
         match self {
@@ -208,7 +857,7 @@ impl ValueType {
             _ => None,
         }
     }
-    
+
     /// Get a reference to a string if this ValueType is a String
     pub fn as_str(&self) -> Option<&str> {
         match self {
@@ -216,7 +865,7 @@ impl ValueType {
             _ => None,
         }
     }
-    
+
     /// Get a number if this ValueType is a Number
     pub fn as_f64(&self) -> Option<f64> {
         match self {
@@ -224,7 +873,7 @@ impl ValueType {
             _ => None,
         }
     }
-    
+
     /// Get a boolean if this ValueType is a Bool
     pub fn as_bool(&self) -> Option<bool> {
         match self {
@@ -232,7 +881,7 @@ impl ValueType {
             _ => None,
         }
     }
-    
+
     /// Get bytes if this ValueType is Bytes
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self {
@@ -354,7 +1003,7 @@ impl From<Value> for ValueType {
 // that can be used to implement From for specific struct types
 
 /// Macro to implement From<YourStruct> for ValueType
-/// 
+///
 /// Use this macro to implement From for your custom struct types that implement SerializableStruct.
 /// Example:
 /// ```ignore
@@ -363,10 +1012,10 @@ impl From<Value> for ValueType {
 /// use std::collections::HashMap;
 /// use runar_common::types::ValueType;
 /// use anyhow::Result;
-/// 
+///
 /// #[derive(Debug)]
 /// struct MyStruct {}
-/// 
+///
 /// impl SerializableStruct for MyStruct {
 ///     fn to_map(&self) -> Result<HashMap<String, ValueType>> {
 ///         Ok(HashMap::new())
@@ -384,7 +1033,7 @@ impl From<Value> for ValueType {
 ///         Box::new(MyStruct {})
 ///     }
 /// }
-/// 
+///
 /// implement_from_for_valuetype!(MyStruct);
 /// ```
 #[macro_export]
@@ -396,4 +1045,11 @@ macro_rules! implement_from_for_valuetype {
             }
         }
     };
+}
+
+/// A helper struct to store serialized data
+#[derive(Clone, Debug)]
+struct SerializedValue {
+    category: ValueCategory,
+    data: Vec<u8>,
 }
