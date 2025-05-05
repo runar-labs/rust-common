@@ -8,22 +8,23 @@ mod value_type;
 mod value_typed;
 mod vmap;
 
-// Re-export the original ValueType
-pub use value_type::SerializableStruct;
-pub use value_type::ValueType;
-
-// Re-export the macro for the original ValueType
-// #[macro_export] places it at the crate root
-pub use crate::implement_from_for_valuetype;
-
-// Re-export the new ArcValueType implementation
-pub use value_type::ArcValueType;
-pub use value_type::ValueCategory;
-
-// Re-export other types
-pub use value_typed::value_from_bytes;
-pub use value_typed::TypedValue;
+// Export our types
+pub use self::erased_arc::ErasedArc;
+pub use self::value_type::{ArcValueType, TypeRegistry, ValueCategory, ValueType};
+pub use self::value_typed::{value_from_bytes, TypedValue};
 pub use vmap::VMap;
+
+// Export the implement_from_for_valuetype macro
+#[macro_export]
+macro_rules! implement_from_for_valuetype {
+    ($t:ty, $variant:ident) => {
+        impl From<$t> for $crate::types::ValueType {
+            fn from(value: $t) -> Self {
+                $crate::types::ValueType::$variant(value)
+            }
+        }
+    };
+}
 
 // Export implementation details for advanced users
 pub mod internal {

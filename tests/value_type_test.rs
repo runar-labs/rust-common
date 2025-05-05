@@ -1,14 +1,51 @@
+use std::any::Any;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use anyhow::Result;
-use runar_common::types::ArcValueType;
+use bincode;
+use runar_common::types::{ArcValueType, ErasedArc, TypeRegistry, ValueCategory};
+use serde::{Deserialize, Serialize};
+
+// Create a test registry for use in tests
+fn create_test_registry() -> TypeRegistry {
+    let mut registry = TypeRegistry::new();
+
+    // Register the test struct for serialization
+    registry.register::<TestStruct>().unwrap();
+
+    // // Make sure TestStruct is also registered using a simpler name
+    // // This is needed for tests that rely on "TestStruct" as the type name
+    // registry
+    //     .register_custom_deserializer::<TestStruct>(
+    //         "TestStruct",
+    //         Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
+    //             let value: TestStruct = bincode::deserialize(bytes)?;
+    //             Ok(Box::new(value))
+    //         }),
+    //     )
+    //     .unwrap();
+
+    // Explicitly register HashMap<String, String> for map tests
+    registry.register_map::<String, String>().unwrap();
+
+    // Make sure all registrations are done before any serialization
+    println!("Test registry initialized with TestStruct and map types");
+
+    registry
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+struct TestStruct {
+    field1: String,
+    field2: i32,
+}
 
 #[test]
 fn test_primitives_arc_preservation() -> Result<()> {
     // Create a value with a string
     let string_value = "Hello, world!".to_string();
-    let value = ArcValueType::from_value(string_value);
+    let value = ArcValueType::new_primitive(string_value);
 
     // Get reference to the string
     let ref1 = value.as_type_ref::<String>()?;
@@ -28,7 +65,7 @@ fn test_primitives_arc_preservation() -> Result<()> {
 fn test_list_arc_preservation() -> Result<()> {
     // Create a value with a list
     let list = vec![1, 2, 3, 4, 5];
-    let value = ArcValueType::from_list(list);
+    let value = ArcValueType::new_list(list);
 
     // Get references
     let ref1 = value.as_list_ref::<i32>()?;
@@ -51,7 +88,7 @@ fn test_map_arc_preservation() -> Result<()> {
     map.insert("key1".to_string(), "value1".to_string());
     map.insert("key2".to_string(), "value2".to_string());
 
-    let value = ArcValueType::from_map(map);
+    let value = ArcValueType::new_map(map);
 
     // Get references
     let ref1 = value.as_map_ref::<String, String>()?;
@@ -69,9 +106,10 @@ fn test_map_arc_preservation() -> Result<()> {
     assert_eq!(ref2.get("key1"), Some(&"value1".to_string()));
     assert_eq!(ref2.get("key2"), Some(&"value2".to_string()));
 
-    //lets check serialization
-    let bytes = value.to_bytes()?;
-    let value_from_bytes = ArcValueType::from_bytes(&bytes)?;
+    // Let's check serialization
+    let registry = create_test_registry();
+    let bytes = registry.serialize_value(&value)?;
+    let value_from_bytes = registry.deserialize_value(&bytes)?;
     let ref3 = value_from_bytes.as_map_ref::<String, String>()?;
     assert_eq!(ref3.len(), 2);
     assert_eq!(ref3.get("key1"), Some(&"value1".to_string()));
@@ -83,12 +121,6 @@ fn test_map_arc_preservation() -> Result<()> {
 #[test]
 fn test_struct_arc_preservation() -> Result<()> {
     // Create a struct
-    #[derive(Debug, Clone, PartialEq)]
-    struct TestStruct {
-        field1: String,
-        field2: i32,
-    }
-
     let test_struct = TestStruct {
         field1: "Hello".to_string(),
         field2: 42,
@@ -110,11 +142,36 @@ fn test_struct_arc_preservation() -> Result<()> {
     assert_eq!(ref1.field1, "Hello");
     assert_eq!(ref1.field2, 42);
 
-    //lets check serialization
-    let bytes = value.to_bytes()?;
-    let value_from_bytes = ArcValueType::from_bytes(&bytes)?;
-    let ref3 = value_from_bytes.as_struct_ref::<TestStruct>()?;
-    assert_eq!(*ref3, test_struct);
+    // No need to test serialization here - we'll do that in a separate test
+    Ok(())
+}
+
+#[test]
+fn test_struct_serialization() -> Result<()> {
+    // Create test struct
+    let test_struct = TestStruct {
+        field1: "Hello".to_string(),
+        field2: 42,
+    };
+
+    // Create a registry
+    let registry = create_test_registry();
+
+    // First, directly create an ArcValueType from the struct
+    let value = ArcValueType::from_struct(test_struct.clone());
+
+    // Manually serialize it
+    let serialized_bytes = registry.serialize_value(&value)?;
+
+    // Now we should be able to deserialize it back
+    let deserialized_value = registry.deserialize_value(&serialized_bytes)?;
+
+    // Extract to validate - if this fails, our test failure is in the right place
+    let deserialized_struct = deserialized_value.as_struct_ref::<TestStruct>()?;
+
+    // Verify the deserialized content
+    assert_eq!(deserialized_struct.field1, "Hello");
+    assert_eq!(deserialized_struct.field2, 42);
 
     Ok(())
 }
@@ -122,7 +179,7 @@ fn test_struct_arc_preservation() -> Result<()> {
 #[test]
 fn test_type_mismatch_errors() -> Result<()> {
     // Create a value with a string
-    let value = ArcValueType::from_value("Hello, world!".to_string());
+    let value = ArcValueType::new_primitive("Hello, world!".to_string());
 
     // Try to get it as an integer - should fail
     let result = value.as_type_ref::<i32>();
@@ -147,7 +204,7 @@ fn test_null_value() -> Result<()> {
 fn test_primitive_cloning() -> Result<()> {
     // Test that as_type (not as_type_ref) does clone the value
     let string_value = "Hello, world!".to_string();
-    let value = ArcValueType::from_value(string_value);
+    let value = ArcValueType::new_primitive(string_value);
 
     // Get a cloned value
     let cloned_value: String = value.as_type()?;
@@ -164,6 +221,21 @@ fn test_primitive_cloning() -> Result<()> {
     let ref_value = value.as_type_ref::<String>()?;
     assert_eq!(&*ref_value, "Hello, world!");
     assert_eq!(cloned_value, "Hello, world! Modified");
+
+    Ok(())
+}
+
+#[test]
+fn test_registry_with_defaults() -> Result<()> {
+    // Create a registry with defaults
+    let registry = TypeRegistry::with_defaults();
+
+    // Test serialization and deserialization of a primitive
+    let value = ArcValueType::new_primitive(42i32);
+    let bytes = registry.serialize_value(&value)?;
+    let value_from_bytes = registry.deserialize_value(&bytes)?;
+    let num: i32 = value_from_bytes.as_type()?;
+    assert_eq!(num, 42);
 
     Ok(())
 }
