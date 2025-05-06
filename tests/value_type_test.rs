@@ -79,7 +79,7 @@ fn test_map_arc_preservation() -> Result<()> {
     map.insert("key1".to_string(), "value1".to_string());
     map.insert("key2".to_string(), "value2".to_string());
 
-    let value = ArcValueType::new_map(map);
+    let mut value = ArcValueType::new_map(map);
 
     // Get references
     let ref1 = value.as_map_ref::<String, String>()?;
@@ -100,7 +100,7 @@ fn test_map_arc_preservation() -> Result<()> {
     // Let's check serialization
     let registry = create_test_registry();
     let bytes = registry.serialize_value(&value)?;
-    let value_from_bytes = registry.deserialize_value(bytes)?;
+    let mut value_from_bytes = registry.deserialize_value(bytes)?;
     let ref3 = value_from_bytes.as_map_ref::<String, String>()?;
     assert_eq!(ref3.len(), 2);
     assert_eq!(ref3.get("key1"), Some(&"value1".to_string()));
@@ -117,7 +117,7 @@ fn test_struct_arc_preservation() -> Result<()> {
         field2: 42,
     };
 
-    let value = ArcValueType::from_struct(test_struct.clone());
+    let mut value = ArcValueType::from_struct(test_struct.clone());
 
     // Get references
     let ref1 = value.as_struct_ref::<TestStruct>()?;
@@ -155,7 +155,7 @@ fn test_struct_serialization() -> Result<()> {
     let serialized_bytes = registry.serialize_value(&value)?;
 
     // Now we should be able to deserialize it back
-    let deserialized_value = registry.deserialize_value(serialized_bytes)?;
+    let mut deserialized_value = registry.deserialize_value(serialized_bytes)?;
 
     // Extract to validate - if this fails, our test failure is in the right place
     let deserialized_struct = deserialized_value.as_struct_ref::<TestStruct>()?;
@@ -164,7 +164,12 @@ fn test_struct_serialization() -> Result<()> {
     assert_eq!(deserialized_struct.field1, "Hello");
     assert_eq!(deserialized_struct.field2, 42);
 
-    Ok(())
+    //again
+    let deserialized_struct = deserialized_value.as_struct_ref::<TestStruct>()?;
+    assert_eq!(deserialized_struct.field1, "Hello");
+    assert_eq!(deserialized_struct.field2, 42);
+
+    qOk(())
 }
 
 #[test]
@@ -186,7 +191,7 @@ fn test_map_of_struts_serialization() -> Result<()> {
 
     println!("Created test map with structs");
 
-    let value = ArcValueType::new_map(map.clone());
+    let mut value = ArcValueType::new_map(map.clone());
     println!("Created ArcValueType, category: {:?}", value.category);
 
     // Get references
@@ -222,7 +227,7 @@ fn test_map_of_struts_serialization() -> Result<()> {
     let bytes = registry.serialize_value(&value)?;
     println!("Serialized value, {} bytes", bytes.len());
 
-    let value_from_bytes = registry.deserialize_value(bytes)?;
+    let mut value_from_bytes = registry.deserialize_value(bytes)?;
     println!(
         "Deserialized value, category: {:?}",
         value_from_bytes.category
