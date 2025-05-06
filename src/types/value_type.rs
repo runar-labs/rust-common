@@ -2,25 +2,61 @@
 //
 // Type-erased value type with Arc preservation
 
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
-use log;
 use rustc_hash::FxHashMap;
 use serde::{Deserialize, Serialize};
 
 use super::erased_arc::ErasedArc;
+use crate::logging::{Component, Logger};
 
-/// Container for lazy deserialization of struct data
+/// Type alias for the cloneable deserializer function pointer
+pub type DeserializerFn = Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
+
+/// Wrapper struct for deserializer function that implements Debug
+#[derive(Clone)]
+pub struct DeserializerFnWrapper {
+    // The actual deserializer function
+    pub func: Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>,
+}
+
+impl std::fmt::Debug for DeserializerFnWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DeserializerFn")
+    }
+}
+
+impl DeserializerFnWrapper {
+    pub fn new<F>(func: F) -> Self
+    where
+        F: Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync + 'static,
+    {
+        DeserializerFnWrapper {
+            func: Arc::new(func),
+        }
+    }
+
+    pub fn call(&self, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
+        (self.func)(bytes)
+    }
+}
+
+/// Container for lazy deserialization data using Arc and offsets
 #[derive(Debug, Clone)]
-struct LazyDeserializer {
+pub struct LazyDataWithOffset {
     /// The original type name from the serialized data
-    type_name: String,
-    /// The raw serialized bytes
-    bytes: Vec<u8>,
+    pub type_name: String,
+    /// Reference to the original shared buffer
+    pub original_buffer: Arc<[u8]>,
+    /// Start offset of the relevant data within the buffer
+    pub start_offset: usize,
+    /// End offset of the relevant data within the buffer
+    pub end_offset: usize,
+    // NOTE: We no longer store the deserializer function here, as we use direct bincode
 }
 
 /// Categorizes the value for efficient dispatch
@@ -31,30 +67,51 @@ pub enum ValueCategory {
     Map,
     Struct,
     Null,
-    /// Serialized bytes (lazy deserialization)
+    /// Raw bytes (used for Vec<u8>, not for lazy deserialization)
     Bytes,
 }
 
 /// Registry for type-specific serialization and deserialization handlers
 pub struct TypeRegistry {
     serializers: FxHashMap<String, Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>>,
-    deserializers:
-        FxHashMap<String, Box<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>>,
+    deserializers: FxHashMap<String, DeserializerFnWrapper>,
     is_sealed: bool,
+    /// Logger for TypeRegistry operations
+    logger: Logger,
 }
 
 impl TypeRegistry {
+    /// Create a new registry with default logger
     pub fn new() -> Self {
         TypeRegistry {
             serializers: FxHashMap::default(),
             deserializers: FxHashMap::default(),
             is_sealed: false,
+            // Create a default logger with System component
+            logger: Logger::new_root(Component::System, "default"),
+        }
+    }
+
+    /// Create a new registry with a specific logger
+    pub fn with_logger(logger: Logger) -> Self {
+        TypeRegistry {
+            serializers: FxHashMap::default(),
+            deserializers: FxHashMap::default(),
+            is_sealed: false,
+            logger,
         }
     }
 
     /// Initialize with default types
     pub fn with_defaults() -> Self {
         let mut registry = Self::new();
+        registry.register_defaults();
+        registry
+    }
+
+    /// Initialize with default types and a specific logger
+    pub fn with_defaults_and_logger(logger: Logger) -> Self {
+        let mut registry = Self::with_logger(logger);
         registry.register_defaults();
         registry
     }
@@ -126,24 +183,20 @@ impl TypeRegistry {
             }),
         );
 
-        // Register deserializer using both full and simple type names
-        self.deserializers.insert(
-            type_name.to_string(),
-            Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
+        // Create a deserializer function using DeserializerFnWrapper
+        let deserializer =
+            DeserializerFnWrapper::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
                 let value: T = bincode::deserialize(bytes)?;
                 Ok(Box::new(value))
-            }),
-        );
+            });
+
+        // Register deserializer using both full and simple type names
+        self.deserializers
+            .insert(type_name.to_string(), deserializer.clone());
 
         // Only register the simple name version if it's different and not already registered
         if simple_name != type_name && !self.deserializers.contains_key(&simple_name) {
-            self.deserializers.insert(
-                simple_name,
-                Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-                    let value: T = bincode::deserialize(bytes)?;
-                    Ok(Box::new(value))
-                }),
-            );
+            self.deserializers.insert(simple_name, deserializer);
         }
 
         Ok(())
@@ -188,34 +241,30 @@ impl TypeRegistry {
             }),
         );
 
-        // Register deserializer using both full and simple type names
-        self.deserializers.insert(
-            type_name.to_string(),
-            Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
+        // Create a deserializer function using DeserializerFnWrapper
+        let deserializer =
+            DeserializerFnWrapper::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
                 let map: HashMap<K, V> = bincode::deserialize(bytes)?;
                 Ok(Box::new(map))
-            }),
-        );
+            });
+
+        // Register deserializer using both full and simple type names
+        self.deserializers
+            .insert(type_name.to_string(), deserializer.clone());
 
         // Only register the simple name version if it's different and not already registered
         if simple_name != type_name && !self.deserializers.contains_key(&simple_name) {
-            self.deserializers.insert(
-                simple_name,
-                Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-                    let map: HashMap<K, V> = bincode::deserialize(bytes)?;
-                    Ok(Box::new(map))
-                }),
-            );
+            self.deserializers.insert(simple_name, deserializer);
         }
 
         Ok(())
     }
 
     /// Register a custom deserializer with a specific type name
-    pub fn register_custom_deserializer<T: 'static + Send + Sync>(
+    pub fn register_custom_deserializer(
         &mut self,
         type_name: &str,
-        deserializer: Box<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>,
+        deserializer: DeserializerFnWrapper,
     ) -> Result<()> {
         if self.is_sealed {
             return Err(anyhow!(
@@ -240,155 +289,11 @@ impl TypeRegistry {
         }
     }
 
-    /// Deserialize bytes to a value using the appropriate registered handler
-    pub fn deserialize(&self, type_name: &str, bytes: &[u8]) -> Result<Box<dyn Any + Send + Sync>> {
-        if let Some(deserializer) = self.deserializers.get(type_name) {
-            deserializer(bytes)
-                .map_err(|e| anyhow!("Deserialization error for type {}: {}", type_name, e))
-        } else {
-            // Handle simple type names
-            if type_name.contains("::") {
-                if let Some(simple_name) = type_name.split("::").last() {
-                    if let Some(deserializer) = self.deserializers.get(simple_name) {
-                        return deserializer(bytes).map_err(|e| {
-                            anyhow!(
-                                "Deserialization error for simplified type {}: {}",
-                                simple_name,
-                                e
-                            )
-                        });
-                    }
-                }
-            }
-
-            Err(anyhow!(
-                "No deserializer registered for type: {}",
-                type_name
-            ))
-        }
-    }
-
-    /// Serialize a value to bytes
-    pub fn serialize_value(&self, value: &ArcValueType) -> Result<Vec<u8>> {
-        // First byte is the category marker
-        let mut result = Vec::new();
-
-        match value.category {
-            ValueCategory::Primitive => {
-                // Add category marker (1 byte)
-                result.push(0x01);
-
-                // Add type name length and type name
-                let type_name = value.value.type_name();
-                let type_bytes = type_name.as_bytes();
-                result.push(type_bytes.len() as u8);
-                result.extend_from_slice(type_bytes);
-
-                // For basic types, use direct serialization
-                let any_ref = value.value.as_any()?;
-                match type_name {
-                    "i32" => self.serialize_primitive::<i32>(any_ref, &mut result)?,
-                    "i64" => self.serialize_primitive::<i64>(any_ref, &mut result)?,
-                    "f32" => self.serialize_primitive::<f32>(any_ref, &mut result)?,
-                    "f64" => self.serialize_primitive::<f64>(any_ref, &mut result)?,
-                    "bool" => self.serialize_primitive::<bool>(any_ref, &mut result)?,
-                    "String" | "std::string::String" | "alloc::string::String" => {
-                        self.serialize_primitive::<String>(any_ref, &mut result)?
-                    }
-                    _ => {
-                        let serialized = self.serialize(any_ref, type_name)?;
-                        result.extend_from_slice(&serialized);
-                    }
-                }
-                Ok(result)
-            }
-            ValueCategory::List => {
-                // Add category marker (1 byte)
-                result.push(0x02);
-
-                // Add type name length and type name
-                let type_name = value.value.type_name();
-                let type_bytes = type_name.as_bytes();
-                result.push(type_bytes.len() as u8);
-                result.extend_from_slice(type_bytes);
-
-                // For lists, either use fast path or registry
-                let any_ref = value.value.as_any()?;
-                if type_name.contains("Vec<i32>") {
-                    self.serialize_list::<i32>(any_ref, &mut result)?;
-                } else if type_name.contains("Vec<i64>") {
-                    self.serialize_list::<i64>(any_ref, &mut result)?;
-                } else if type_name.contains("Vec<f32>") {
-                    self.serialize_list::<f32>(any_ref, &mut result)?;
-                } else if type_name.contains("Vec<f64>") {
-                    self.serialize_list::<f64>(any_ref, &mut result)?;
-                } else if type_name.contains("Vec<bool>") {
-                    self.serialize_list::<bool>(any_ref, &mut result)?;
-                } else if type_name.contains("Vec<String>") {
-                    self.serialize_list::<String>(any_ref, &mut result)?;
-                } else {
-                    let serialized = self.serialize(any_ref, type_name)?;
-                    result.extend_from_slice(&serialized);
-                }
-                Ok(result)
-            }
-            ValueCategory::Map => {
-                // Add category marker (1 byte)
-                result.push(0x03);
-
-                // Add type name length and type name
-                let type_name = value.value.type_name();
-                let type_bytes = type_name.as_bytes();
-                result.push(type_bytes.len() as u8);
-                result.extend_from_slice(type_bytes);
-
-                // For maps, use the registry to serialize
-                let any_ref = value.value.as_any()?;
-                let serialized = self.serialize(any_ref, type_name)?;
-                result.extend_from_slice(&serialized);
-                Ok(result)
-            }
-            ValueCategory::Struct => {
-                // Add category marker (1 byte)
-                result.push(0x04);
-
-                // Add type name length and type name
-                let type_name = value.value.type_name();
-                let type_bytes = type_name.as_bytes();
-                result.push(type_bytes.len() as u8);
-                result.extend_from_slice(type_bytes);
-
-                // For structs, use the registry to serialize
-                let any_ref = value.value.as_any()?;
-                let serialized = self.serialize(any_ref, type_name)?;
-                result.extend_from_slice(&serialized);
-                Ok(result)
-            }
-            ValueCategory::Null => {
-                // Just a marker byte for null
-                result.push(0x05);
-                Ok(result)
-            }
-            ValueCategory::Bytes => {
-                // Add category marker (1 byte)
-                result.push(0x06);
-
-                // For bytes, just include the raw data
-                if let Ok(bytes) = value.value.as_arc::<Vec<u8>>() {
-                    // Add length (4 bytes) followed by the actual bytes
-                    let len_bytes = (bytes.len() as u32).to_be_bytes();
-                    result.extend_from_slice(&len_bytes);
-                    result.extend_from_slice(&bytes);
-                    Ok(result)
-                } else {
-                    Err(anyhow!("Value is not a byte array"))
-                }
-            }
-        }
-    }
-
-    /// Deserialize bytes to an ArcValueType
-    pub fn deserialize_value(&self, bytes: &[u8]) -> Result<ArcValueType> {
+    /// Helper to extract the header from serialized bytes (slice view)
+    fn extract_header_from_slice<'a>(
+        &self,
+        bytes: &'a [u8],
+    ) -> Result<(ValueCategory, String, &'a [u8])> {
         if bytes.is_empty() {
             return Err(anyhow!("Empty byte array"));
         }
@@ -404,14 +309,14 @@ impl TypeRegistry {
             _ => return Err(anyhow!("Invalid category marker: {}", bytes[0])),
         };
 
-        // For null, just return a null value
+        // For null, no type name is needed
         if category == ValueCategory::Null {
-            return Ok(ArcValueType::null());
+            return Ok((category, String::new(), &[]));
         }
 
-        // For all other types, we need to extract the type name
+        // Extract the type name
         if bytes.len() < 2 {
-            return Err(anyhow!("Byte array too short"));
+            return Err(anyhow!("Byte array too short for header"));
         }
 
         let type_name_len = bytes[1] as usize;
@@ -424,207 +329,218 @@ impl TypeRegistry {
             .map_err(|_| anyhow!("Invalid type name encoding"))?;
 
         // The actual data starts after the type name
-        let data_start = 2 + type_name_len;
+        let data_start_offset = 2 + type_name_len;
+        let data_bytes = &bytes[data_start_offset..];
 
-        // Regular processing for other types
-        match category {
-            ValueCategory::Primitive => {
-                // Fast path for common primitive types
-                match type_name.as_str() {
-                    "i32" => {
-                        let value: i32 = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    "i64" => {
-                        let value: i64 = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    "f32" => {
-                        let value: f32 = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    "f64" => {
-                        let value: f64 = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    "bool" => {
-                        let value: bool = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    "String" | "std::string::String" | "alloc::string::String" => {
-                        let value: String = bincode::deserialize(&bytes[data_start..])?;
-                        Ok(ArcValueType::new_primitive(value))
-                    }
-                    _ => {
-                        // Use registry for other primitive types
-                        let boxed_any = self.deserialize(&type_name, &bytes[data_start..])?;
-                        let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                        Ok(ArcValueType::new(erased, ValueCategory::Primitive))
-                    }
-                }
-            }
-            ValueCategory::List => {
-                // Fast path for common list types
-                if type_name.contains("Vec<i32>") {
-                    let list: Vec<i32> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else if type_name.contains("Vec<i64>") {
-                    let list: Vec<i64> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else if type_name.contains("Vec<f32>") {
-                    let list: Vec<f32> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else if type_name.contains("Vec<f64>") {
-                    let list: Vec<f64> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else if type_name.contains("Vec<bool>") {
-                    let list: Vec<bool> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else if type_name.contains("Vec<String>") {
-                    let list: Vec<String> = bincode::deserialize(&bytes[data_start..])?;
-                    Ok(ArcValueType::new_list(list))
-                } else {
-                    // Use registry for other list types
-                    let boxed_any = self.deserialize(&type_name, &bytes[data_start..])?;
-                    let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                    Ok(ArcValueType::new(erased, ValueCategory::List))
-                }
-            }
-            ValueCategory::Map => {
-                // Fast path for common map types
-                if type_name.contains("HashMap<String, String>")
-                    || type_name.contains("HashMap<std::string::String, std::string::String>")
-                    || type_name.contains("HashMap<alloc::string::String, alloc::string::String>")
-                {
-                    match bincode::deserialize::<HashMap<String, String>>(&bytes[data_start..]) {
-                        Ok(map) => Ok(ArcValueType::new_map(map)),
-                        Err(_) => {
-                            // Fall back to registry
-                            let boxed_any = self.deserialize(&type_name, &bytes[data_start..])?;
-                            let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                            Ok(ArcValueType::new(erased, ValueCategory::Map))
-                        }
-                    }
-                } else if type_name.contains("HashMap<String, i32>")
-                    || type_name.contains("HashMap<std::string::String, i32>")
-                {
-                    match bincode::deserialize::<HashMap<String, i32>>(&bytes[data_start..]) {
-                        Ok(map) => Ok(ArcValueType::new_map(map)),
-                        Err(_) => {
-                            // Fall back to registry
-                            let boxed_any = self.deserialize(&type_name, &bytes[data_start..])?;
-                            let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                            Ok(ArcValueType::new(erased, ValueCategory::Map))
-                        }
-                    }
-                } else if type_name.contains("HashMap<String, f64>")
-                    || type_name.contains("HashMap<std::string::String, f64>")
-                {
-                    match bincode::deserialize::<HashMap<String, f64>>(&bytes[data_start..]) {
-                        Ok(map) => Ok(ArcValueType::new_map(map)),
-                        Err(_) => {
-                            // Fall back to registry
-                            let boxed_any = self.deserialize(&type_name, &bytes[data_start..])?;
-                            let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                            Ok(ArcValueType::new(erased, ValueCategory::Map))
-                        }
-                    }
-                } else {
-                    // Use registry for other map types
-                    match self.deserialize(&type_name, &bytes[data_start..]) {
-                        Ok(boxed_any) => {
-                            let erased = ErasedArc::from_boxed_any(boxed_any)?;
-                            Ok(ArcValueType::new(erased, ValueCategory::Map))
-                        }
-                        Err(_)
-                            if type_name.contains("HashMap<") && type_name.contains("String") =>
-                        {
-                            // Try to deserialize as generic string map
-                            match bincode::deserialize::<HashMap<String, String>>(
-                                &bytes[data_start..],
-                            ) {
-                                Ok(map) => Ok(ArcValueType::new_map(map)),
-                                Err(e) => Err(e.into()),
-                            }
-                        }
-                        Err(e) => Err(e),
-                    }
-                }
-            }
-            ValueCategory::Struct => {
-                // For structs, we'll use lazy deserialization
-                // Store the type name and raw bytes in a LazyDeserializer
+        Ok((category, type_name, data_bytes))
+    }
 
-                // Create a simple container for the raw bytes and type name
-                let lazy_deserializer = LazyDeserializer {
-                    type_name: type_name.clone(),
-                    bytes: bytes[data_start..].to_vec(),
+    /// Deserialize bytes (owned Arc) to an ArcValueType
+    pub fn deserialize_value(&self, bytes_arc: Arc<[u8]>) -> Result<ArcValueType> {
+        if bytes_arc.is_empty() {
+            return Err(anyhow!("Empty byte array"));
+        }
+
+        // Extract header info using a slice view
+        let (original_category, type_name, data_slice) =
+            self.extract_header_from_slice(&bytes_arc)?;
+
+        // For null, just return a null value
+        if original_category == ValueCategory::Null {
+            return Ok(ArcValueType::null());
+        }
+
+        self.logger.debug(format!(
+            "Deserializing value with type: {} (category: {:?})",
+            type_name, original_category
+        ));
+
+        // For simple types, deserialize immediately from the slice
+        if self.is_simple_immediate_type(&type_name) {
+            self.logger.debug(format!(
+                "Immediate deserialization for simple type: {}",
+                type_name
+            ));
+            let deserializer = self
+                .get_deserializer_arc(&type_name)
+                .ok_or_else(|| anyhow!("Missing deserializer for simple type {}", type_name))?;
+            // Deserialize directly from the data slice
+            let boxed_any = deserializer.call(data_slice)?;
+            let value = ErasedArc::from_boxed_any(boxed_any)?;
+            return Ok(ArcValueType {
+                category: original_category,
+                value,
+            });
+        } else {
+            // For complex types, store LazyDataWithOffset
+            self.logger.debug(format!(
+                "Lazy deserialization setup for complex type: {}",
+                type_name
+            ));
+
+            // Check if a deserializer exists (even though we don't store it in LazyDataWithOffset,
+            // its registration confirms the type is known)
+            if self.deserializers.contains_key(&type_name) {
+                // Calculate offsets relative to the original Arc buffer
+                let data_start_offset =
+                    (data_slice.as_ptr() as usize) - (bytes_arc.as_ptr() as usize);
+                let data_end_offset = data_start_offset + data_slice.len();
+
+                let lazy_data = LazyDataWithOffset {
+                    type_name: type_name.to_string(),
+                    original_buffer: bytes_arc.clone(), // Clone the Arc (cheap)
+                    start_offset: data_start_offset,
+                    end_offset: data_end_offset,
                 };
 
-                // Return as a Bytes category, but we'll handle it specially
-                return Ok(ArcValueType::new(
-                    ErasedArc::from_value(lazy_deserializer),
-                    ValueCategory::Bytes, // Use Bytes to indicate lazy deserialization
+                // Store Arc<LazyDataWithOffset> in value, keeping original category
+                let value = ErasedArc::from_value(lazy_data);
+                return Ok(ArcValueType {
+                    category: original_category, // Keep original category (Map, Struct, etc.)
+                    value,
+                });
+            } else {
+                return Err(anyhow!(
+                    "No deserializer registered for complex type, cannot create lazy value: {}",
+                    type_name
                 ));
             }
+        }
+    }
+
+    /// Get a stored deserializer by type name
+    pub fn get_deserializer_arc(&self, type_name: &str) -> Option<DeserializerFnWrapper> {
+        self.deserializers.get(type_name).cloned()
+    }
+
+    /// Helper to decide if a type should be immediately deserialized
+    fn is_simple_immediate_type(&self, type_name: &str) -> bool {
+        // Simple types that should be deserialized immediately
+        type_name == "i32"
+            || type_name == "i64"
+            || type_name == "f32"
+            || type_name == "f64"
+            || type_name == "bool"
+            || type_name == "String"
+            || type_name.contains("Vec<")
+                && (type_name.contains("i32")
+                    || type_name.contains("i64")
+                    || type_name.contains("f32")
+                    || type_name.contains("f64")
+                    || type_name.contains("bool")
+                    || type_name.contains("String"))
+    }
+
+    /// Print all registered deserializers for debugging
+    pub fn debug_print_deserializers(&self) {
+        for key in self.deserializers.keys() {
+            self.logger.debug(format!("  - {}", key));
+        }
+    }
+
+    /// Serialize a value to bytes, returning an Arc<[u8]>
+    pub fn serialize_value(&self, value: &ArcValueType) -> Result<Arc<[u8]>> {
+        // Check if the value holds LazyDataWithOffset
+        if value.value.is_lazy {
+            if let Ok(lazy) = value.value.get_lazy_data() {
+                // Handle lazy case: Reconstruct header and use the stored data segment
+                self.logger.debug(format!(
+                    "Serializing lazy value with type: {} (category: {:?})",
+                    lazy.type_name, value.category
+                ));
+
+                let mut result_vec = Vec::new(); // Build into a Vec first
+
+                // Add category marker byte
+                let category_byte = match value.category {
+                    ValueCategory::Primitive => 0x01,
+                    ValueCategory::List => 0x02,
+                    ValueCategory::Map => 0x03,
+                    ValueCategory::Struct => 0x04,
+                    ValueCategory::Null => return Err(anyhow!("Cannot serialize lazy Null value")),
+                    ValueCategory::Bytes => 0x06,
+                };
+                result_vec.push(category_byte);
+
+                // Add type name length and bytes
+                let type_bytes = lazy.type_name.as_bytes();
+                if type_bytes.len() > 255 {
+                    return Err(anyhow!("Type name too long: {}", lazy.type_name));
+                }
+                result_vec.push(type_bytes.len() as u8);
+                result_vec.extend_from_slice(type_bytes);
+
+                // Add the data bytes from the original buffer using offsets
+                result_vec
+                    .extend_from_slice(&lazy.original_buffer[lazy.start_offset..lazy.end_offset]);
+
+                return Ok(Arc::from(result_vec)); // Convert Vec to Arc<[u8]>
+            } else {
+                return Err(anyhow!(
+                    "Value marked as lazy, but failed to extract LazyDataWithOffset"
+                ));
+            }
+        }
+
+        // Non-lazy case (normal serialization)
+        self.logger.debug(format!(
+            "Serializing eager value with type: {} (category: {:?})",
+            value.value.type_name(),
+            value.category
+        ));
+
+        let mut result_vec = Vec::new(); // Build into a Vec first
+        let category_byte = match value.category {
+            ValueCategory::Primitive => 0x01,
+            ValueCategory::List => 0x02,
+            ValueCategory::Map => 0x03,
+            ValueCategory::Struct => 0x04,
+            ValueCategory::Null => 0x05,
+            ValueCategory::Bytes => 0x06,
+        };
+        result_vec.push(category_byte);
+
+        // Handle Null separately as it has no type name or data
+        if value.category == ValueCategory::Null {
+            return Ok(Arc::from(result_vec)); // Convert Vec to Arc<[u8]>
+        }
+
+        // Add type name length and type name (for non-Null)
+        let type_name = value.value.type_name();
+        let type_bytes = type_name.as_bytes();
+        if type_bytes.len() > 255 {
+            return Err(anyhow!("Type name too long: {}", type_name));
+        }
+        result_vec.push(type_bytes.len() as u8);
+        result_vec.extend_from_slice(type_bytes);
+
+        // Get the actual data bytes to append
+        let data_bytes = match value.category {
+            ValueCategory::Primitive
+            | ValueCategory::List
+            | ValueCategory::Map
+            | ValueCategory::Struct => {
+                // Use the registered serializer
+                let any_ref = value.value.as_any()?;
+                self.serialize(any_ref, type_name)? // Returns Vec<u8>
+            }
             ValueCategory::Bytes => {
-                // For bytes, extract the length and the actual bytes
-                if bytes.len() < data_start + 4 {
-                    return Err(anyhow!("Byte array too short for length field"));
+                // Directly get the Vec<u8> bytes
+                if let Ok(bytes_arc) = value.value.as_arc::<Vec<u8>>() {
+                    // Need to clone the inner Vec<u8> if we are returning an owned buffer section
+                    bytes_arc.to_vec()
+                } else {
+                    return Err(anyhow!(
+                        "Value has Bytes category but doesn't contain Arc<Vec<u8>> (actual: {})",
+                        value.value.type_name()
+                    ));
                 }
-
-                let len_bytes = [
-                    bytes[data_start],
-                    bytes[data_start + 1],
-                    bytes[data_start + 2],
-                    bytes[data_start + 3],
-                ];
-                let data_len = u32::from_be_bytes(len_bytes) as usize;
-
-                if bytes.len() < data_start + 4 + data_len {
-                    return Err(anyhow!("Byte array too short for data"));
-                }
-
-                let data = bytes[data_start + 4..data_start + 4 + data_len].to_vec();
-                Ok(ArcValueType::new(
-                    ErasedArc::from_value(data),
-                    ValueCategory::Bytes,
-                ))
             }
-            ValueCategory::Null => {
-                // This should have been handled above
-                unreachable!()
-            }
-        }
-    }
+            ValueCategory::Null => unreachable!(), // Handled above
+        };
+        result_vec.extend_from_slice(&data_bytes);
 
-    // Helper methods for serializing common types
-    fn serialize_primitive<T: 'static + Serialize>(
-        &self,
-        value: &dyn Any,
-        result: &mut Vec<u8>,
-    ) -> Result<()> {
-        if let Some(typed_value) = value.downcast_ref::<T>() {
-            let serialized = bincode::serialize(typed_value)?;
-            result.extend_from_slice(&serialized);
-            Ok(())
-        } else {
-            Err(anyhow!("Failed to downcast primitive value"))
-        }
-    }
-
-    fn serialize_list<T: 'static + Serialize>(
-        &self,
-        value: &dyn Any,
-        result: &mut Vec<u8>,
-    ) -> Result<()> {
-        if let Some(typed_value) = value.downcast_ref::<Vec<T>>() {
-            let serialized = bincode::serialize(typed_value)?;
-            result.extend_from_slice(&serialized);
-            Ok(())
-        } else {
-            Err(anyhow!("Failed to downcast list value"))
-        }
+        Ok(Arc::from(result_vec)) // Convert final Vec to Arc<[u8]>
     }
 }
 
@@ -724,11 +640,64 @@ impl ArcValueType {
     }
 
     /// Get map as a reference of the specified key/value types
-    pub fn as_map_ref<K: 'static, V: 'static>(&self) -> Result<Arc<HashMap<K, V>>> {
+    pub fn as_map_ref<K, V>(&self) -> Result<Arc<HashMap<K, V>>>
+    where
+        K: 'static + Clone + Serialize + for<'de> Deserialize<'de> + Eq + std::hash::Hash,
+        V: 'static + Clone + Serialize + for<'de> Deserialize<'de>,
+    {
+        // Check if the category matches
         if self.category != ValueCategory::Map {
-            return Err(anyhow!("Value is not a map"));
+            return Err(anyhow!(
+                "Value is not a map (category: {:?})",
+                self.category
+            ));
         }
-        self.value.as_arc::<HashMap<K, V>>()
+
+        // Simple flag-based check: is this a lazy deserialized value?
+        if self.value.is_lazy {
+            // Use the method to get LazyDataWithOffset
+            match self.value.get_lazy_data() {
+                Ok(lazy) => {
+                    // Add a type name check before attempting direct deserialization
+                    let expected_type_name = std::any::type_name::<HashMap<K, V>>();
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_type_name,
+                        &lazy.type_name,
+                    ) {
+                        return Err(anyhow!(
+                            "Lazy data type mismatch: requested {}, but stored type is {}",
+                            expected_type_name,
+                            lazy.type_name
+                        ));
+                    }
+
+                    // Reconstruct the slice from the original buffer and offsets
+                    let data_slice = &lazy.original_buffer[lazy.start_offset..lazy.end_offset];
+
+                    // Directly deserialize using bincode with the target type
+                    match bincode::deserialize::<HashMap<K, V>>(data_slice) {
+                        Ok(map) => return Ok(Arc::new(map)), // Success!
+                        Err(e) => return Err(anyhow!(
+                            "Failed to directly deserialize lazy map data for type '{}' into HashMap<{}, {}>: {}",
+                            lazy.type_name,
+                            std::any::type_name::<K>(),
+                            std::any::type_name::<V>(),
+                            e
+                        )),
+                    }
+                }
+                Err(e) => {
+                    // If get_lazy_data failed but is_lazy was true, this is unexpected
+                    return Err(anyhow!("Expected lazy data but couldn't extract it: {}", e));
+                }
+            }
+        }
+
+        // Not lazy or couldn't get LazyData - try direct cast
+        match self.value.as_arc::<HashMap<K, V>>() {
+            Ok(map) => Ok(map),
+            Err(e) => Err(anyhow!("Failed to get map via direct cast: {}", e)),
+        }
     }
 
     /// Get value as the specified type (makes a clone)
@@ -741,91 +710,58 @@ impl ArcValueType {
     pub fn as_struct_ref<T: 'static + Clone + Send + Sync + for<'de> Deserialize<'de>>(
         &self,
     ) -> Result<Arc<T>> {
-        // First handle the case where we have a LazyDeserializer
-        if self.category == ValueCategory::Bytes {
-            // Check if we have a LazyDeserializer
-            if let Ok(lazy) = self.value.as_any().and_then(|any| {
-                any.downcast_ref::<LazyDeserializer>()
-                    .ok_or_else(|| anyhow!("Not a LazyDeserializer"))
-            }) {
-                // We have a LazyDeserializer, so try to deserialize the bytes to the requested type T
-                match bincode::deserialize::<T>(&lazy.bytes) {
-                    Ok(value) => {
-                        return Ok(Arc::new(value));
-                    }
-                    Err(e) => {
-                        // Failed direct deserialization, log the error and return it
-                        log::debug!(
-                            "Failed to deserialize as {} from original type {}: {}",
-                            std::any::type_name::<T>(),
-                            lazy.type_name,
-                            e
-                        );
-                        return Err(anyhow!(
-                            "Failed to deserialize to type {} from original type {}: {}",
-                            std::any::type_name::<T>(),
-                            lazy.type_name,
-                            e
-                        ));
-                    }
-                }
-            }
-            // Standard bytes handling for non-LazyDeserializer bytes
-            else if let Ok(bytes) = self.value.as_arc::<Vec<u8>>() {
-                // Try direct deserialization
-                match bincode::deserialize::<T>(bytes.as_slice()) {
-                    Ok(value) => {
-                        return Ok(Arc::new(value));
-                    }
-                    Err(e) => {
-                        return Err(anyhow!(
-                            "Failed to deserialize bytes to type {}: {}",
-                            std::any::type_name::<T>(),
-                            e
-                        ));
-                    }
-                }
-            }
-
-            // If we reach here, we couldn't handle the bytes value
+        // Check if the category matches
+        if self.category != ValueCategory::Struct {
             return Err(anyhow!(
-                "Unable to deserialize bytes to requested type {}",
-                std::any::type_name::<T>()
+                "Value is not a struct (category: {:?})",
+                self.category
             ));
         }
 
-        // Handle struct category
-        if self.category == ValueCategory::Struct {
-            // Try to directly access as an Arc<T>
-            match self.value.as_arc::<T>() {
-                Ok(arc_t) => {
-                    return Ok(arc_t);
-                }
-                Err(e) => {
-                    // Try to serialize then deserialize as a last resort
-                    if let Ok(bytes) = self.value.to_bytes() {
-                        // Try direct deserialization
-                        match bincode::deserialize::<T>(&bytes) {
-                            Ok(value) => {
-                                return Ok(Arc::new(value));
-                            }
-                            Err(deser_err) => {
-                                return Err(anyhow!("Type mismatch: cannot convert struct to requested type. Errors: original: {}, deserialize: {}", 
-                                                   e, deser_err));
-                            }
-                        }
+        // Simple flag-based check: is this a lazy deserialized value?
+        if self.value.is_lazy {
+            // Use the method to get LazyDataWithOffset
+            match self.value.get_lazy_data() {
+                Ok(lazy) => {
+                    // Add a type name check before attempting direct deserialization
+                    let expected_type_name = std::any::type_name::<T>();
+                    if !crate::types::erased_arc::compare_type_names(
+                        expected_type_name,
+                        &lazy.type_name,
+                    ) {
+                        return Err(anyhow!(
+                            "Lazy data type mismatch: requested {}, but stored type is {}",
+                            expected_type_name,
+                            lazy.type_name
+                        ));
                     }
 
-                    return Err(anyhow!("Could not convert struct to requested type: {}", e));
+                    // Reconstruct the slice from the original buffer and offsets
+                    let data_slice = &lazy.original_buffer[lazy.start_offset..lazy.end_offset];
+
+                    // Directly deserialize using bincode with the target type
+                    match bincode::deserialize::<T>(data_slice) {
+                        Ok(struct_val) => return Ok(Arc::new(struct_val)), // Success!
+                        Err(e) => return Err(anyhow!(
+                            "Failed to directly deserialize lazy struct data for type '{}' into {}: {}",
+                            lazy.type_name,
+                            std::any::type_name::<T>(),
+                            e
+                        )),
+                    }
+                }
+                Err(e) => {
+                    // If get_lazy_data failed but is_lazy was true, this is unexpected
+                    return Err(anyhow!("Expected lazy data but couldn't extract it: {}", e));
                 }
             }
         }
 
-        // If we get here, the category is something else
-        Err(anyhow!(
-            "Value is not a struct or serialized bytes, category: {:?}",
-            self.category
-        ))
+        // Not lazy or couldn't get LazyData - try direct cast
+        match self.value.as_arc::<T>() {
+            Ok(struct_ref) => Ok(struct_ref),
+            Err(e) => Err(anyhow!("Failed to get struct via direct cast: {}", e)),
+        }
     }
 }
 

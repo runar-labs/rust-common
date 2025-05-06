@@ -14,20 +14,11 @@ fn create_test_registry() -> TypeRegistry {
     // Register the test struct for serialization
     registry.register::<TestStruct>().unwrap();
 
-    // // Make sure TestStruct is also registered using a simpler name
-    // // This is needed for tests that rely on "TestStruct" as the type name
-    // registry
-    //     .register_custom_deserializer::<TestStruct>(
-    //         "TestStruct",
-    //         Box::new(|bytes: &[u8]| -> Result<Box<dyn Any + Send + Sync>> {
-    //             let value: TestStruct = bincode::deserialize(bytes)?;
-    //             Ok(Box::new(value))
-    //         }),
-    //     )
-    //     .unwrap();
-
+    // // Make sure TestStru
     // Explicitly register HashMap<String, String> for map tests
     registry.register_map::<String, String>().unwrap();
+
+    registry.register_map::<String, TestStruct>().unwrap();
 
     // Make sure all registrations are done before any serialization
     println!("Test registry initialized with TestStruct and map types");
@@ -109,7 +100,7 @@ fn test_map_arc_preservation() -> Result<()> {
     // Let's check serialization
     let registry = create_test_registry();
     let bytes = registry.serialize_value(&value)?;
-    let value_from_bytes = registry.deserialize_value(&bytes)?;
+    let value_from_bytes = registry.deserialize_value(bytes)?;
     let ref3 = value_from_bytes.as_map_ref::<String, String>()?;
     assert_eq!(ref3.len(), 2);
     assert_eq!(ref3.get("key1"), Some(&"value1".to_string()));
@@ -164,7 +155,7 @@ fn test_struct_serialization() -> Result<()> {
     let serialized_bytes = registry.serialize_value(&value)?;
 
     // Now we should be able to deserialize it back
-    let deserialized_value = registry.deserialize_value(&serialized_bytes)?;
+    let deserialized_value = registry.deserialize_value(serialized_bytes)?;
 
     // Extract to validate - if this fails, our test failure is in the right place
     let deserialized_struct = deserialized_value.as_struct_ref::<TestStruct>()?;
@@ -172,6 +163,84 @@ fn test_struct_serialization() -> Result<()> {
     // Verify the deserialized content
     assert_eq!(deserialized_struct.field1, "Hello");
     assert_eq!(deserialized_struct.field2, 42);
+
+    Ok(())
+}
+
+#[test]
+fn test_map_of_struts_serialization() -> Result<()> {
+    // Create a map
+    let mut map = HashMap::new();
+
+    let test_struct1 = TestStruct {
+        field1: "Hello".to_string(),
+        field2: 42,
+    };
+    map.insert("key1".to_string(), test_struct1.clone());
+
+    let test_struct2 = TestStruct {
+        field1: "World".to_string(),
+        field2: 100,
+    };
+    map.insert("key2".to_string(), test_struct2.clone());
+
+    println!("Created test map with structs");
+
+    let value = ArcValueType::new_map(map.clone());
+    println!("Created ArcValueType, category: {:?}", value.category);
+
+    // Get references
+    let ref1 = value.as_map_ref::<String, TestStruct>()?;
+    println!("Successfully got ref1");
+
+    let ref2 = value.as_map_ref::<String, TestStruct>()?;
+    println!("Successfully got ref2");
+
+    // Verify identity
+    assert!(Arc::ptr_eq(&ref1, &ref2));
+    println!("Identity verified");
+
+    // Verify content
+    assert_eq!(ref1.len(), 2);
+    assert_eq!(ref1.get("key1"), Some(&test_struct1));
+    assert_eq!(ref1.get("key2"), Some(&test_struct2));
+    println!("Content verified for ref1");
+
+    assert_eq!(ref2.len(), 2);
+    assert_eq!(ref2.get("key1"), Some(&test_struct1));
+    assert_eq!(ref2.get("key2"), Some(&test_struct2));
+    println!("Content verified for ref2");
+
+    // Let's check serialization
+    let mut registry = create_test_registry();
+    println!("Created registry");
+
+    // Print registered deserializers
+    println!("REGISTERED DESERIALIZERS:");
+    registry.debug_print_deserializers();
+
+    let bytes = registry.serialize_value(&value)?;
+    println!("Serialized value, {} bytes", bytes.len());
+
+    let value_from_bytes = registry.deserialize_value(bytes)?;
+    println!(
+        "Deserialized value, category: {:?}",
+        value_from_bytes.category
+    );
+
+    // Print type name to debug
+    println!(
+        "Type from deserialization: {}",
+        value_from_bytes.value.type_name()
+    );
+
+    let ref3 = value_from_bytes.as_map_ref::<String, TestStruct>()?;
+    println!("Successfully got ref3");
+
+    assert_eq!(ref3.len(), 2);
+    assert_eq!(ref3.get("key1"), Some(&test_struct1));
+    assert_eq!(ref3.get("key2"), Some(&test_struct2));
+    println!("Content verified for ref3");
 
     Ok(())
 }
@@ -222,6 +291,12 @@ fn test_primitive_cloning() -> Result<()> {
     assert_eq!(&*ref_value, "Hello, world!");
     assert_eq!(cloned_value, "Hello, world! Modified");
 
+    let registry = create_test_registry();
+    //serialize and deserialize
+    let serialized_bytes = registry.serialize_value(&value)?;
+    let value_from_bytes = registry.deserialize_value(serialized_bytes)?;
+    let ref_value = value_from_bytes.as_type_ref::<String>()?;
+    assert_eq!(&*ref_value, "Hello, world!");
     Ok(())
 }
 
@@ -233,7 +308,7 @@ fn test_registry_with_defaults() -> Result<()> {
     // Test serialization and deserialization of a primitive
     let value = ArcValueType::new_primitive(42i32);
     let bytes = registry.serialize_value(&value)?;
-    let value_from_bytes = registry.deserialize_value(&bytes)?;
+    let value_from_bytes = registry.deserialize_value(bytes)?;
     let num: i32 = value_from_bytes.as_type()?;
     assert_eq!(num, 42);
 
