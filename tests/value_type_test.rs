@@ -4,12 +4,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bincode;
-use runar_common::types::{ArcValueType, ErasedArc, TypeRegistry, ValueCategory};
+use runar_common::types::{ArcValueType, ErasedArc, SerializerRegistry, ValueCategory};
 use serde::{Deserialize, Serialize};
 
 // Create a test registry for use in tests
-fn create_test_registry() -> TypeRegistry {
-    let mut registry = TypeRegistry::new();
+fn create_test_registry() -> SerializerRegistry {
+    let mut registry = SerializerRegistry::new();
 
     // Register the test struct for serialization
     registry.register::<TestStruct>().unwrap();
@@ -169,7 +169,7 @@ fn test_struct_serialization() -> Result<()> {
     assert_eq!(deserialized_struct.field1, "Hello");
     assert_eq!(deserialized_struct.field2, 42);
 
-    qOk(())
+    Ok(())
 }
 
 #[test]
@@ -308,7 +308,7 @@ fn test_primitive_cloning() -> Result<()> {
 #[test]
 fn test_registry_with_defaults() -> Result<()> {
     // Create a registry with defaults
-    let registry = TypeRegistry::with_defaults();
+    let registry = SerializerRegistry::with_defaults();
 
     // Test serialization and deserialization of a primitive
     let value = ArcValueType::new_primitive(42i32);

@@ -3,16 +3,16 @@
 // Common traits and utilities for the Runar P2P stack
 
 // Export modules
-pub mod service_info;
-pub mod macros;
-pub mod utils;
-pub mod types;
 pub mod errors;
 pub mod logging;
+pub mod macros;
+pub mod service_info;
+pub mod types;
+pub mod utils;
 
 // Re-export traits and types at the root level
-pub use service_info::ServiceInfo;
 pub use logging::{Component, Logger, LoggingContext};
+pub use service_info::ServiceInfo;
 
 // Note: The logging macros have been removed in favor of direct logger usage.
 // See rust-common/src/logging/macros.rs for details on the recommended approach.

@@ -13,10 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use super::erased_arc::ErasedArc;
 use crate::logging::{Component, Logger};
-
-/// Type alias for the cloneable deserializer function pointer
-pub type DeserializerFn = Arc<dyn Fn(&[u8]) -> Result<Box<dyn Any + Send + Sync>> + Send + Sync>;
-
+ 
 /// Wrapper struct for deserializer function that implements Debug
 #[derive(Clone)]
 pub struct DeserializerFnWrapper {
@@ -84,18 +81,18 @@ pub enum ValueCategory {
 }
 
 /// Registry for type-specific serialization and deserialization handlers
-pub struct TypeRegistry {
+pub struct SerializerRegistry {
     serializers: FxHashMap<String, Box<dyn Fn(&dyn Any) -> Result<Vec<u8>> + Send + Sync>>,
     deserializers: FxHashMap<String, DeserializerFnWrapper>,
     is_sealed: bool,
-    /// Logger for TypeRegistry operations
+    /// Logger for SerializerRegistry operations
     logger: Logger,
 }
 
-impl TypeRegistry {
+impl SerializerRegistry {
     /// Create a new registry with default logger
     pub fn new() -> Self {
-        TypeRegistry {
+        SerializerRegistry {
             serializers: FxHashMap::default(),
             deserializers: FxHashMap::default(),
             is_sealed: false,
@@ -106,7 +103,7 @@ impl TypeRegistry {
 
     /// Create a new registry with a specific logger
     pub fn with_logger(logger: Logger) -> Self {
-        TypeRegistry {
+        SerializerRegistry {
             serializers: FxHashMap::default(),
             deserializers: FxHashMap::default(),
             is_sealed: false,
@@ -383,7 +380,7 @@ impl TypeRegistry {
                 category: original_category,
                 value,
             });
-        } else {
+                } else {
             // For complex types, store LazyDataWithOffset
             self.logger.debug(format!(
                 "Lazy deserialization setup for complex type: {}",
@@ -541,7 +538,7 @@ impl TypeRegistry {
                 if let Ok(bytes_arc) = value.value.as_arc::<Vec<u8>>() {
                     // Need to clone the inner Vec<u8> if we are returning an owned buffer section
                     bytes_arc.to_vec()
-                } else {
+        } else {
                     return Err(anyhow!(
                         "Value has Bytes category but doesn't contain Arc<Vec<u8>> (actual: {})",
                         value.value.type_name()
@@ -728,7 +725,7 @@ impl ArcValueType {
         + fmt::Debug + Send + Sync,
     {
         if self.category != ValueCategory::Struct {
-            return Err(anyhow!(
+                        return Err(anyhow!(
                 "Category mismatch: Expected Struct, found {:?}",
                 self.category
             ));
@@ -753,7 +750,7 @@ impl ArcValueType {
             // Perform type name check before deserialization
             let expected_type_name = std::any::type_name::<T>();
             if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
-                return Err(anyhow!(
+                        return Err(anyhow!(
                     "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
                     expected_type_name,
                     type_name_clone
@@ -837,61 +834,10 @@ impl fmt::Display for ArcValueType {
                 ValueCategory::Bytes => {
                     if let Ok(bytes_arc) = self.value.as_arc::<Vec<u8>>() {
                         write!(f, "Bytes(size: {} bytes)", bytes_arc.len())
-                    } else {
+                } else {
                         write!(f, "Bytes<Error Retrieving Size>")
                     }
                 }
-            }
-        }
-    }
-}
-
-/// Container for serialized value with category information
-#[derive(Debug)]
-pub struct SerializedValue {
-    /// The original value category
-    pub category: ValueCategory,
-    /// The serialized bytes
-    pub data: Vec<u8>,
-}
-
-/// Legacy ValueType enum for backward compatibility
-/// This will be deprecated in future versions
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum ValueType {
-    Null,
-    Bool(bool),
-    Number(f64),
-    String(String),
-    Array(Vec<ValueType>),
-    Map(HashMap<String, ValueType>),
-}
-
-impl ValueType {
-    /// Convert a JSON value to a ValueType
-    pub fn from_json(json: serde_json::Value) -> Self {
-        match json {
-            serde_json::Value::Null => ValueType::Null,
-            serde_json::Value::Bool(b) => ValueType::Bool(b),
-            serde_json::Value::Number(n) => {
-                if let Some(f) = n.as_f64() {
-                    ValueType::Number(f)
-                } else {
-                    ValueType::Null
-                }
-            }
-            serde_json::Value::String(s) => ValueType::String(s),
-            serde_json::Value::Array(arr) => {
-                let values: Vec<ValueType> =
-                    arr.into_iter().map(|v| ValueType::from_json(v)).collect();
-                ValueType::Array(values)
-            }
-            serde_json::Value::Object(obj) => {
-                let mut map = HashMap::new();
-                for (k, v) in obj {
-                    map.insert(k, ValueType::from_json(v));
-                }
-                ValueType::Map(map)
             }
         }
     }

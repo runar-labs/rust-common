@@ -654,7 +654,9 @@ macro_rules! vmap_str {
                         // Not a map, can't continue traversing, exit loop
                         break;
                     }
+
                 }
+
             }
             
             result
@@ -1370,4 +1372,6 @@ macro_rules! vmap_vec {
             result
         }
     };
+} 
+} 
 } 

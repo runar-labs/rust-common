@@ -1,101 +1,86 @@
+//! VMap module for runar_common
+//! Provides a convenient wrapper for working with maps with string keys
+
+use crate::types::ArcValueType;
 use std::collections::HashMap;
-use crate::types::ValueType;
-use anyhow::Result;
+use std::fmt;
+use std::sync::Arc;
 
-/// VMap wrapper for easier ValueType manipulation
-#[derive(Debug, Clone)]
-pub struct VMap(pub HashMap<String, ValueType>);
+/// VMap wrapper for easier map manipulation with string keys and generic values
+#[derive(Clone)]
+pub struct VMap<T> {
+    pub inner: HashMap<String, T>,
+}
 
-impl VMap {
+// Manual Debug implementation that doesn't require T: Debug
+impl<T> fmt::Debug for VMap<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("VMap")
+            .field("keys", &self.inner.keys().collect::<Vec<_>>())
+            .field("size", &self.inner.len())
+            .finish()
+    }
+}
+
+impl<T> VMap<T> {
     /// Create a new empty VMap
     pub fn new() -> Self {
-        VMap(HashMap::new())
+        VMap {
+            inner: HashMap::new(),
+        }
     }
 
     /// Create a VMap from an existing HashMap
-    pub fn from_hashmap(map: HashMap<String, ValueType>) -> Self {
-        VMap(map)
-    }
-
-    /// Create a VMap from a ValueType (if it's a Map, otherwise return empty VMap)
-    pub fn from_value_type(value: ValueType) -> Self {
-        match value {
-            ValueType::Map(map) => VMap(map),
-            _ => VMap::new(),
-        }
+    pub fn from_hashmap(map: HashMap<String, T>) -> Self {
+        VMap { inner: map }
     }
 
     /// Get a value by key
-    pub fn get(&self, key: &str) -> Option<&ValueType> {
-        self.0.get(key)
+    pub fn get(&self, key: &str) -> Option<&T> {
+        self.inner.get(key)
     }
 
     /// Insert a value
-    pub fn insert<K: Into<String>, V: Into<ValueType>>(&mut self, key: K, value: V) {
-        self.0.insert(key.into(), value.into());
-    }
-
-    /// Extract a string value with error handling
-    pub fn get_string(&self, key: &str) -> Result<String> {
-        match self.0.get(key) {
-            Some(ValueType::String(s)) => Ok(s.clone()),
-            Some(other) => Err(anyhow::anyhow!("Expected String for key '{}', got {:?}", key, other)),
-            None => Err(anyhow::anyhow!("Key '{}' not found", key)),
-        }
-    }
-
-    /// Extract a number as i32 with error handling
-    pub fn get_number_as_int(&self, key: &str) -> Result<i32> {
-        match self.0.get(key) {
-            Some(ValueType::Number(n)) => Ok(*n as i32),
-            Some(other) => Err(anyhow::anyhow!("Expected Number for key '{}', got {:?}", key, other)),
-            None => Err(anyhow::anyhow!("Key '{}' not found", key)),
-        }
-    }
-
-    /// Extract a number as f64 with error handling
-    pub fn get_number_as_float(&self, key: &str) -> Result<f64> {
-        match self.0.get(key) {
-            Some(ValueType::Number(n)) => Ok(*n),
-            Some(other) => Err(anyhow::anyhow!("Expected Number for key '{}', got {:?}", key, other)),
-            None => Err(anyhow::anyhow!("Key '{}' not found", key)),
-        }
-    }
-
-    /// Extract a boolean value with error handling
-    pub fn get_bool(&self, key: &str) -> Result<bool> {
-        match self.0.get(key) {
-            Some(ValueType::Bool(b)) => Ok(*b),
-            Some(other) => Err(anyhow::anyhow!("Expected Bool for key '{}', got {:?}", key, other)),
-            None => Err(anyhow::anyhow!("Key '{}' not found", key)),
-        }
+    pub fn insert<K: Into<String>>(&mut self, key: K, value: T) {
+        self.inner.insert(key.into(), value);
     }
 
     /// Convert to inner HashMap
-    pub fn into_inner(self) -> HashMap<String, ValueType> {
-        self.0
+    pub fn into_inner(self) -> HashMap<String, T> {
+        self.inner
     }
 
-    /// Get a reference to the inner HashMap
-    pub fn as_hashmap(&self) -> &HashMap<String, ValueType> {
-        &self.0
+    /// Get reference to inner HashMap
+    pub fn as_hashmap(&self) -> &HashMap<String, T> {
+        &self.inner
     }
 }
 
-impl From<HashMap<String, ValueType>> for VMap {
-    fn from(map: HashMap<String, ValueType>) -> Self {
-        VMap(map)
+impl<T> From<HashMap<String, T>> for VMap<T> {
+    fn from(map: HashMap<String, T>) -> Self {
+        VMap { inner: map }
     }
 }
 
-impl From<VMap> for ValueType {
-    fn from(vmap: VMap) -> Self {
-        ValueType::Map(vmap.0)
+impl<T> From<VMap<T>> for HashMap<String, T> {
+    fn from(vmap: VMap<T>) -> Self {
+        vmap.inner
     }
 }
 
-impl From<VMap> for HashMap<String, ValueType> {
-    fn from(vmap: VMap) -> Self {
-        vmap.0
+impl<T> Default for VMap<T> {
+    fn default() -> Self {
+        Self::new()
     }
-} 
+}
+// Extension methods for ArcValueType conversions
+impl<T> VMap<T>
+where
+    T: 'static + Clone + Send + Sync + fmt::Debug,
+    HashMap<String, T>: 'static + Send + Sync,
+{
+    /// Convert VMap to an ArcValueType with Map category
+    pub fn to_arc_value_type(self) -> ArcValueType {
+        ArcValueType::from_map(self.inner)
+    }
+}

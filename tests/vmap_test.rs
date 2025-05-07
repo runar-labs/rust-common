@@ -1,131 +1,102 @@
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    
+
     use anyhow::Result;
-    
-    use runar_common::types::ValueType;
+
+    use runar_common::types::ArcValueType;
     use runar_common::types::VMap;
-    
-    // Helper macros for the tests
-    macro_rules! vmap {
-        ($map:expr, $key:expr, String) => {
-            $map.get_string($key)
-        };
-        ($map:expr, $key:expr, Number) => {
-            $map.get_number_as_int($key)
-        };
-        ($map:expr, $key:expr, Bool) => {
-            $map.get_bool($key)
-        };
-        ($map:expr, $key:expr) => {
-            $map.get($key)
-        };
-    }
-    
+
     // Test implementation
-    fn create_test_vmap() -> VMap {
+    fn create_test_vmap() -> VMap<ArcValueType> {
         let mut map = HashMap::new();
-        map.insert("string_key".to_string(), ValueType::String("test_value".to_string()));
-        map.insert("int_key".to_string(), ValueType::Number(42.0));
-        map.insert("bool_key".to_string(), ValueType::Bool(true));
-        map.insert("float_key".to_string(), ValueType::Number(3.14));
-        
-        // Add a nested map
-        let mut nested_map = HashMap::new();
-        nested_map.insert("nested_string".to_string(), ValueType::String("nested_value".to_string()));
-        nested_map.insert("nested_int".to_string(), ValueType::Number(100.0));
-        map.insert("nested_key".to_string(), ValueType::Map(nested_map));
-        
-        // Add an array
-        let array = vec![
-            ValueType::String("item1".to_string()),
-            ValueType::String("item2".to_string()),
-            ValueType::Number(42.0)
-        ];
-        map.insert("array_key".to_string(), ValueType::Array(array));
-        
-        VMap::from(map)
+        map.insert(
+            "key1".to_string(),
+            ArcValueType::new_primitive("value1".to_string()),
+        );
+        map.insert("key2".to_string(), ArcValueType::new_primitive(42.0));
+        map.insert("key3".to_string(), ArcValueType::new_primitive(true));
+        VMap::from_hashmap(map)
     }
-    
+
     #[test]
-    fn test_basic_value_extraction() -> Result<()> {
+    fn test_basics() -> Result<()> {
         let vmap = create_test_vmap();
-        
-        // Test string extraction
-        let string_value: String = vmap!(vmap, "string_key", String)?;
-        assert_eq!(string_value, "test_value", "String value should match");
-        
-        // Test integer extraction
-        let int_value: i32 = vmap!(vmap, "int_key", Number)?;
-        assert_eq!(int_value, 42, "Integer value should match");
-        
-        // Test boolean extraction
-        let bool_value: bool = vmap!(vmap, "bool_key", Bool)?;
-        assert!(bool_value, "Boolean value should be true");
-        
-        // Test float extraction
-        let float_value: i32 = vmap!(vmap, "float_key", Number)?;
-        assert_eq!(float_value, 3, "Float value should match when converted to int");
-        
+
+        // Test direct key access
+        let value1 = vmap.get("key1").unwrap();
+        let typed_value1: String = value1.as_type()?;
+        assert_eq!(typed_value1, "value1");
+
+        // Test number value
+        let value2 = vmap.get("key2").unwrap();
+        let typed_value2: f64 = value2.as_type()?;
+        assert_eq!(typed_value2, 42.0);
+
+        // Test boolean value
+        let value3 = vmap.get("key3").unwrap();
+        let typed_value3: bool = value3.as_type()?;
+        assert!(typed_value3);
+
+        // Test missing key
+        let missing = vmap.get("missing");
+        assert!(missing.is_none());
+
         Ok(())
     }
-    
-    #[test]
-    fn test_vmap_macro_direct_construction() -> Result<()> {
-        // Alternative using standard construction and insertion
-        let mut vmap = VMap::new();
-        vmap.insert("name", ValueType::String("test".to_string()));
-        vmap.insert("count", ValueType::Number(42.0));
-        vmap.insert("enabled", ValueType::Bool(true));
-        
-        // Verify contents
-        let name: String = vmap!(vmap, "name", String)?;
-        let count: i32 = vmap!(vmap, "count", Number)?;
-        let enabled: bool = vmap!(vmap, "enabled", Bool)?;
-        
-        assert_eq!(name, "test");
-        assert_eq!(count, 42);
-        assert_eq!(enabled, true);
-        
-        Ok(())
-    }
-    
+
     #[test]
     fn test_error_handling() -> Result<()> {
         let vmap = create_test_vmap();
-        
-        // Test missing key
-        let missing_key_result: Result<String, _> = vmap!(vmap, "non_existent_key", String);
-        assert!(missing_key_result.is_err(), "Missing key should return error");
-        
-        // Test wrong type
-        let wrong_type_result: Result<i32, _> = vmap!(vmap, "string_key", Number);
-        assert!(wrong_type_result.is_err(), "Extracting wrong type should return error");
-        
-        // Test error message content
-        match vmap!(vmap, "non_existent_key", String) {
-            Ok(_) => panic!("Should have failed on missing key"),
-            Err(e) => {
-                let err_str = e.to_string();
-                assert!(err_str.contains("non_existent_key"), 
-                    "Error message should contain the key name");
-                assert!(err_str.contains("not found"), 
-                    "Error message should mention that the key was not found");
-            }
-        }
-        
-        match vmap!(vmap, "string_key", Number) {
-            Ok(_) => panic!("Should have failed on wrong type"),
-            Err(e) => {
-                let err_str = e.to_string();
-                assert!(err_str.contains("string_key"), 
-                    "Error message should contain the key name");
-                assert!(err_str.contains("Number"), 
-                    "Error message should mention the expected type");
-            }
-        }
-        
+
+        // Try to get a string as a number
+        let value1 = vmap.get("key1").unwrap();
+        let result: Result<f64> = value1.as_type();
+        assert!(result.is_err());
+
+        // Check that the error message contains information about the wrong type
+        let err = result.unwrap_err();
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("mismatch"),
+            "Error message should mention type conversion issue: {}",
+            err_msg
+        );
+
         Ok(())
     }
-} 
+
+    #[test]
+    fn test_clone() -> Result<()> {
+        let vmap = create_test_vmap();
+        let cloned = vmap.clone();
+
+        // Verify cloned map has the same values
+        assert_eq!(vmap.inner.len(), cloned.inner.len());
+
+        // Verify all keys and values are cloned
+        for (key, value) in vmap.inner.iter() {
+            let cloned_value = cloned.inner.get(key).unwrap();
+
+            // Compare string values
+            if let Ok(v1) = value.as_type::<String>() {
+                let v2: String = cloned_value.as_type()?;
+                assert_eq!(v1, v2);
+            }
+
+            // Compare number values
+            if let Ok(v1) = value.as_type::<f64>() {
+                let v2: f64 = cloned_value.as_type()?;
+                assert_eq!(v1, v2);
+            }
+
+            // Compare boolean values
+            if let Ok(v1) = value.as_type::<bool>() {
+                let v2: bool = cloned_value.as_type()?;
+                assert_eq!(v1, v2);
+            }
+        }
+
+        Ok(())
+    }
+}
