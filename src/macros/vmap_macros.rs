@@ -1,6 +1,6 @@
 // runar_common/src/macros/vmap_macros.rs
 //
-// This file contains macros for working with ValueType maps.
+// This file contains macros for working with ValueType maps and raw HashMap operations.
 
 /// Create a HashMap with ValueType values
 /// 
@@ -158,6 +158,60 @@ macro_rules! vmap {
                 },
                 _ => $crate::types::ArcValueType::null(),
             }
+        }
+    };
+}
+
+/// Create a raw HashMap without wrapping values in ArcValueType
+/// 
+/// This macro allows for easy creation of standard HashMaps similar to how the vec! macro works.
+/// 
+/// # Examples
+/// 
+/// ```
+/// use runar_common::hmap;
+/// use std::collections::HashMap;
+/// 
+/// // Create a HashMap with string keys and string values
+/// let string_map = hmap! {
+///     "name" => "John Doe",
+///     "city" => "New York"
+/// };
+/// 
+/// // Create a HashMap with string keys and numeric values
+/// let int_map = hmap! {
+///     "age" => 30,
+///     "score" => 85
+/// };
+/// 
+/// // Create a HashMap with string keys and boolean values
+/// let bool_map = hmap! {
+///     "is_admin" => true,
+///     "is_active" => false
+/// };
+/// 
+/// // Create an empty HashMap
+/// let empty: HashMap<String, String> = hmap! {};
+/// ```
+#[macro_export]
+macro_rules! hmap {
+    // Empty map
+    {} => {
+        {
+            use std::collections::HashMap;
+            HashMap::new()
+        }
+    };
+    
+    // Map with key-value pairs
+    { $($key:expr => $value:expr),* $(,)? } => {
+        {
+            use std::collections::HashMap;
+            let mut map = HashMap::new();
+            $(
+                map.insert($key.to_string(), $value);
+            )*
+            map
         }
     };
 }
