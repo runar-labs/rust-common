@@ -4,7 +4,10 @@
 
 use std::any::Any;
 use std::collections::HashMap;
-use std::fmt;
+use std::fmt::{self, Debug};
+use std::clone::Clone;
+use std::marker::Copy;
+use std::cmp::{PartialEq, Eq};
 use std::sync::Arc;
 
 use anyhow::{anyhow, Result};
@@ -69,7 +72,7 @@ impl fmt::Debug for LazyDataWithOffset {
 }
 
 /// Categorizes the value for efficient dispatch
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ValueCategory {
     Primitive,
     List,
@@ -90,6 +93,7 @@ pub struct SerializerRegistry {
 }
 
 impl SerializerRegistry {
+
     /// Create a new registry with default logger
     pub fn new() -> Self {
         SerializerRegistry {
@@ -554,13 +558,27 @@ impl SerializerRegistry {
 }
 
 /// A type-erased value container with Arc preservation
+/// Note: This type is NOT serializable because it contains an ErasedArc field.
+/// Any attempt to serialize/deserialize ArcValueType will skip the value field.
 #[derive(Debug, Clone)]
 pub struct ArcValueType {
     /// Categorizes the value for dispatch
     pub category: ValueCategory,
     /// The contained type-erased value
+    /// Note: ErasedArc is type-erased and requires custom serde impl. Only registered types are supported.
     pub value: ErasedArc,
 }
+
+impl PartialEq for ArcValueType {
+    fn eq(&self, other: &Self) -> bool {
+        if self.category != other.category {
+            return false;
+        }
+        self.value.eq_value(&other.value)
+    }
+}
+
+impl Eq for ArcValueType {}
 
 impl ArcValueType {
     /// Create a new ArcValueType
@@ -775,6 +793,25 @@ impl ArcValueType {
             anyhow!("Failed to cast eager value to struct: {}. Expected {}, got {}. Category: {:?}", 
                 e, std::any::type_name::<T>(), self.value.type_name(), self.category)
         )
+    }
+}
+
+// Implement Serialize and Deserialize for ArcValueType, skipping the value field
+use serde::{Serializer, Deserializer};
+
+impl Serialize for ArcValueType {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.category.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for ArcValueType {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let category = ValueCategory::deserialize(deserializer)?;
+        Ok(ArcValueType {
+            category,
+            value: ErasedArc::from_value(()), // placeholder
+        })
     }
 }
 

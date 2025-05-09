@@ -4,20 +4,22 @@
 
 // Type modules
 mod erased_arc;
+pub mod schemas;
 mod value_type;
 mod vmap;
 
 // Export our types
 pub use self::erased_arc::ErasedArc;
-pub use self::value_type::{ArcValueType, TypeRegistry, ValueCategory, ValueType};
+pub use self::schemas::{ActionMetadata, EventMetadata, FieldSchema, SchemaDataType, ServiceMetadata};
+pub use self::value_type::{ArcValueType, SerializerRegistry, ValueCategory};
 pub use vmap::VMap;
 // Export the implement_from_for_valuetype macro
 #[macro_export]
 macro_rules! implement_from_for_valuetype {
     ($t:ty, $variant:ident) => {
-        impl From<$t> for $crate::types::ValueType {
+        impl From<$t> for $crate::types::ArcValueType {
             fn from(value: $t) -> Self {
-                $crate::types::ValueType::$variant(value)
+                $crate::types::ArcValueType::new_primitive(value)
             }
         }
     };

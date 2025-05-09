@@ -173,6 +173,43 @@ fn test_struct_serialization() -> Result<()> {
 }
 
 #[test]
+fn test_nested() -> Result<()> {
+    // Create a map
+    let mut map = HashMap::new();
+    map.insert("key1".to_string(), ArcValueType::new_primitive("value1".to_string()));
+    map.insert("key2".to_string(), ArcValueType::new_primitive("value2".to_string()));
+
+    let mut value = ArcValueType::new_map(map);
+
+    // Get references
+    let ref1 = value.as_map_ref::<String, ArcValueType>()?;
+    let ref2 = value.as_map_ref::<String, ArcValueType>()?;
+
+    // Verify identity
+    assert!(Arc::ptr_eq(&ref1, &ref2));
+ 
+    // Verify content
+    assert_eq!(ref1.len(), 2);
+    assert_eq!(ref1.get("key1"), Some(&ArcValueType::new_primitive("value1".to_string())));
+    assert_eq!(ref1.get("key2"), Some(&ArcValueType::new_primitive("value2".to_string())));
+
+    assert_eq!(ref2.len(), 2);
+    assert_eq!(ref2.get("key1"), Some(&ArcValueType::new_primitive("value1".to_string())));
+    assert_eq!(ref2.get("key2"), Some(&ArcValueType::new_primitive("value2".to_string())));
+
+    // Let's check serialization
+    let registry = create_test_registry();
+    let bytes = registry.serialize_value(&value)?;
+    let mut value_from_bytes = registry.deserialize_value(bytes)?;
+    let ref3 = value_from_bytes.as_map_ref::<String, ArcValueType>()?;
+    assert_eq!(ref3.len(), 2);
+    assert_eq!(ref3.get("key1"), Some(&ArcValueType::new_primitive("value1".to_string())));
+    assert_eq!(ref3.get("key2"), Some(&ArcValueType::new_primitive("value2".to_string())));
+
+    Ok(())
+}
+
+#[test]
 fn test_map_of_struts_serialization() -> Result<()> {
     // Create a map
     let mut map = HashMap::new();

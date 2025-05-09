@@ -37,9 +37,9 @@ macro_rules! vmap {
     {} => {
         {
             use std::collections::HashMap;
-            use $crate::types::ValueType;
-            let map: HashMap<String, ValueType> = HashMap::new();
-            ValueType::Map(map)
+            use $crate::types::ArcValueType;
+            let map: HashMap<String, ArcValueType> = HashMap::new();
+            ArcValueType::new_map(map)
         }
     };
     
@@ -47,12 +47,12 @@ macro_rules! vmap {
     { $($key:expr => $value:expr),* $(,)? } => {
         {
             use std::collections::HashMap;
-            use $crate::types::ValueType;
+            use $crate::types::ArcValueType;
             let mut map = HashMap::new();
             $(
-                map.insert($key.to_string(), ValueType::from($value));
+                map.insert($key.to_string(), ArcValueType::new_primitive($value));
             )*
-            ValueType::Map(map)
+            ArcValueType::new_map(map)
         }
     };
     
@@ -60,10 +60,10 @@ macro_rules! vmap {
     ($map:expr, $key:expr => $default:expr) => {
         {
             match &$map {
-                $crate::types::ValueType::Map(map_data) => {
+                $crate::types::ArcValueType::Map(map_data) => {
                     match map_data.get($key) {
                         Some(value_type) => match value_type {
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 // Use type_name_of_val to detect default type
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("&str") || default_type.ends_with("String") {
@@ -72,7 +72,7 @@ macro_rules! vmap {
                                     $default
                                 }
                             },
-                            $crate::types::ValueType::Number(n) => {
+                            $crate::types::ArcValueType::Number(n) => {
                                 // Use type_name_of_val to detect default type
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("f64") {
@@ -89,7 +89,7 @@ macro_rules! vmap {
                                     $default
                                 }
                             },
-                            $crate::types::ValueType::Bool(b) => {
+                            $crate::types::ArcValueType::Bool(b) => {
                                 // Use type_name_of_val to detect default type
                                 let default_type = std::any::type_name_of_val(&$default);
                                 if default_type.ends_with("bool") {
@@ -113,7 +113,7 @@ macro_rules! vmap {
     // Extract a direct value with default
     ($value:expr, => $default:expr) => {
         match &$value {
-            $crate::types::ValueType::String(s) => s.clone(),
+            $crate::types::ArcValueType::String(s) => s.clone(),
             $crate::types::ValueType::Number(n) => {
                 // Use type_name_of_val to detect default type
                 let default_type = std::any::type_name_of_val(&$default);
@@ -150,13 +150,13 @@ macro_rules! vmap {
     ($map:expr, $key:expr) => {
         {
             match &$map {
-                $crate::types::ValueType::Map(map_data) => {
+                $crate::types::ArcValueType::Map(map_data) => {
                     match map_data.get($key) {
                         Some(value_type) => value_type.clone(),
-                        None => $crate::types::ValueType::Null,
+                        None => $crate::types::ArcValueType::null(),
                     }
                 },
-                _ => $crate::types::ValueType::Null,
+                _ => $crate::types::ArcValueType::null(),
             }
         }
     };
@@ -199,7 +199,7 @@ macro_rules! vmap_extract {
                 $crate::types::ValueType::Map(map) => {
                     match map.get($key) {
                         Some(value_type) => match value_type {
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 match &$default {
                                     _ if false => unreachable!(), // This is a hack to make typechecking work
                                     _ | &str => s.clone(),
@@ -212,7 +212,7 @@ macro_rules! vmap_extract {
                                     _ => $default
                                 }
                             },
-                            $crate::types::ValueType::Number(n) => {
+                            $crate::types::ArcValueType::Number(n) => {
                                 match &$default {
                                     _ if false => unreachable!(), // This is a hack to make typechecking work
                                     _ | f64 => *n,
@@ -224,7 +224,7 @@ macro_rules! vmap_extract {
                                     _ => $default
                                 }
                             },
-                            $crate::types::ValueType::Bool(b) => {
+                            $crate::types::ArcValueType::Bool(b) => {
                                 match &$default {
                                     _ if false => unreachable!(), // This is a hack to make typechecking work
                                     _ | bool => *b,
@@ -274,7 +274,7 @@ macro_rules! vmap_extract_string {
                 $crate::types::ValueType::Map(map) => {
                     match map.get($key) {
                         Some(value_type) => match value_type {
-                            $crate::types::ValueType::String(s) => s.clone(),
+                            $crate::types::ArcValueType::String(s) => s.clone(),
                             $crate::types::ValueType::Number(n) => n.to_string(),
                             $crate::types::ValueType::Bool(b) => b.to_string(),
                             _ => $default.to_string(),
@@ -289,7 +289,7 @@ macro_rules! vmap_extract_string {
     
     ($value:expr, => $default:expr) => {
         match &$value {
-            $crate::types::ValueType::String(s) => s.clone(),
+            $crate::types::ArcValueType::String(s) => s.clone(),
             $crate::types::ValueType::Number(n) => n.to_string(),
             $crate::types::ValueType::Bool(b) => b.to_string(),
             _ => $default.to_string(),
@@ -325,7 +325,7 @@ macro_rules! vmap_i32 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as i32,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<i32>() {
                                     result = num;
                                 }
@@ -344,7 +344,7 @@ macro_rules! vmap_i32 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as i32,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<i32>() {
                                             result = num;
                                         }
@@ -413,7 +413,7 @@ macro_rules! vmap_extract_f64 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<f64>() {
                                     result = num;
                                 }
@@ -432,7 +432,7 @@ macro_rules! vmap_extract_f64 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<f64>() {
                                             result = num;
                                         }
@@ -502,7 +502,7 @@ macro_rules! vmap_bool {
                         match v {
                             $crate::types::ValueType::Bool(b) => result = *b,
                             $crate::types::ValueType::Number(n) => result = *n != 0.0,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 let lower = s.to_lowercase();
                                 result = lower == "true" || lower == "yes" || lower == "1";
                             },
@@ -520,7 +520,7 @@ macro_rules! vmap_bool {
                                 match next_value {
                                     $crate::types::ValueType::Bool(b) => result = *b,
                                     $crate::types::ValueType::Number(n) => result = *n != 0.0,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         let lower = s.to_lowercase();
                                         result = lower == "true" || lower == "yes" || lower == "1";
                                     },
@@ -667,7 +667,7 @@ macro_rules! vmap_str {
         {
             let value = $value.clone(); // Create a binding that lives for the entire block
             let result = match &value {
-                $crate::types::ValueType::String(s) => s.clone(),
+                $crate::types::ArcValueType::String(s) => s.clone(),
                 $crate::types::ValueType::Number(n) => n.to_string(),
                 $crate::types::ValueType::Bool(b) => b.to_string(),
                 _ => $default.to_string(),
@@ -693,7 +693,7 @@ macro_rules! vmap_i8 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as i8,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<i8>() {
                                     result = num;
                                 }
@@ -712,7 +712,7 @@ macro_rules! vmap_i8 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as i8,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<i8>() {
                                             result = num;
                                         }
@@ -769,7 +769,7 @@ macro_rules! vmap_i16 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as i16,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<i16>() {
                                     result = num;
                                 }
@@ -788,7 +788,7 @@ macro_rules! vmap_i16 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as i16,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<i16>() {
                                             result = num;
                                         }
@@ -845,7 +845,7 @@ macro_rules! vmap_i64 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as i64,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<i64>() {
                                     result = num;
                                 }
@@ -864,7 +864,7 @@ macro_rules! vmap_i64 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as i64,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<i64>() {
                                             result = num;
                                         }
@@ -921,7 +921,7 @@ macro_rules! vmap_u8 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as u8,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<u8>() {
                                     result = num;
                                 }
@@ -940,7 +940,7 @@ macro_rules! vmap_u8 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as u8,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<u8>() {
                                             result = num;
                                         }
@@ -997,7 +997,7 @@ macro_rules! vmap_u32 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as u32,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<u32>() {
                                     result = num;
                                 }
@@ -1016,7 +1016,7 @@ macro_rules! vmap_u32 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as u32,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<u32>() {
                                             result = num;
                                         }
@@ -1073,7 +1073,7 @@ macro_rules! vmap_u64 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as u64,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<u64>() {
                                     result = num;
                                 }
@@ -1092,7 +1092,7 @@ macro_rules! vmap_u64 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as u64,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<u64>() {
                                             result = num;
                                         }
@@ -1149,7 +1149,7 @@ macro_rules! vmap_f32 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n as f32,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<f32>() {
                                     result = num;
                                 }
@@ -1168,7 +1168,7 @@ macro_rules! vmap_f32 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n as f32,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<f32>() {
                                             result = num;
                                         }
@@ -1225,7 +1225,7 @@ macro_rules! vmap_f64 {
                     if let Some(v) = map.get($key) {
                         match v {
                             $crate::types::ValueType::Number(n) => result = *n,
-                            $crate::types::ValueType::String(s) => {
+                            $crate::types::ArcValueType::String(s) => {
                                 if let Ok(num) = s.parse::<f64>() {
                                     result = num;
                                 }
@@ -1244,7 +1244,7 @@ macro_rules! vmap_f64 {
                                 // We've reached the final key, extract value
                                 match next_value {
                                     $crate::types::ValueType::Number(n) => result = *n,
-                                    $crate::types::ValueType::String(s) => {
+                                    $crate::types::ArcValueType::String(s) => {
                                         if let Ok(num) = s.parse::<f64>() {
                                             result = num;
                                         }
@@ -1299,7 +1299,7 @@ macro_rules! vmap_vec {
             if key_parts.len() == 1 {
                 if let $crate::types::ValueType::Map(map) = current_value {
                     if let Some(v) = map.get($key) {
-                        if let $crate::types::ValueType::Array(a) = v {
+                        if let $crate::types::ArcValueType::List(a) = v {
                             let mut vec_result = Vec::new();
                             for item in a {
                                 match item {
@@ -1355,7 +1355,7 @@ macro_rules! vmap_vec {
         {
             let value = $value.clone(); // Create a binding that lives for the entire block
             let result = match &value {
-                $crate::types::ValueType::Array(a) => {
+                $crate::types::ArcValueType::List(a) => {
                     let mut vec_result = Vec::new();
                     for item in a {
                         match item {
@@ -1372,6 +1372,4 @@ macro_rules! vmap_vec {
             result
         }
     };
-} 
-} 
-} 
+}

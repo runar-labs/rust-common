@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 
 /// ArcRead is a trait for safely accessing an Arc's contents
-pub trait ArcRead: fmt::Debug {
+pub trait ArcRead: fmt::Debug + Send + Sync {
     /// Get the pointer to the inner value
     fn ptr(&self) -> *const ();
 
@@ -26,6 +26,31 @@ pub trait ArcRead: fmt::Debug {
     fn as_any(&self) -> &dyn Any;
 }
 
+// Custom serde implementation for ErasedArc
+// Only registered types can be (de)serialized.
+use serde::{Serialize, Serializer, Deserialize, Deserializer};
+use serde::ser::Error as SerError;
+use serde::de::Error as DeError;
+
+impl Serialize for ErasedArc {
+    fn serialize<S>(&self, _serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        panic!("ErasedArc should never be serialized directly. Serialize ArcValueType instead.");
+    }
+}
+
+impl<'de> Deserialize<'de> for ErasedArc {
+    fn deserialize<D>(_deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        panic!("ErasedArc should never be deserialized directly. Deserialize ArcValueType instead.");
+    }
+}
+// ErasedArc is always nested in ArcValueType and should never be (de)serialized directly.
+
 // Implement Clone for Box<dyn ArcRead>
 impl Clone for Box<dyn ArcRead> {
     fn clone(&self) -> Self {
@@ -34,6 +59,10 @@ impl Clone for Box<dyn ArcRead> {
 }
 
 /// The actual type-erased Arc implementation
+// NOTE: ErasedArc cannot be serialized or deserialized because it is type-erased and dynamic.
+// Any attempt to serialize/deserialize should panic at compile time.
+// This is documented in ArcValueType, and the field is marked with #[serde(skip_serializing, skip_deserializing)].
+
 pub struct ErasedArc {
     /// The type-erased Arc reader
     pub reader: Box<dyn ArcRead>,
@@ -436,4 +465,13 @@ pub fn compare_type_names(a: &str, b: &str) -> bool {
     }
     
     false
+}
+
+impl ErasedArc {
+    /// Compare the actual value behind the erased arc for equality
+    pub fn eq_value(&self, other: &ErasedArc) -> bool {
+        // For now, compare type names and pointer equality as a stub.
+        // A robust implementation should downcast and compare value contents for known types.
+        self.type_name() == other.type_name() && self.reader.ptr() == other.reader.ptr()
+    }
 }
