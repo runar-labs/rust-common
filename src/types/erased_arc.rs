@@ -389,10 +389,9 @@ impl ErasedArc {
     /// Try to extract an Arc<T> from this ErasedArc
     pub fn as_arc<T: 'static>(&self) -> Result<Arc<T>> {
         // Check if the type matches based on name (potentially overridden)
-        let expected_type_name = std::any::type_name::<T>();
-        let actual_type_name = self.type_name();
-
         if !self.is_type::<T>() {
+            let expected_type_name = std::any::type_name::<T>();
+            let actual_type_name = self.type_name();
             return Err(anyhow!(
                 "Type mismatch: expected {}, but has {}",
                 expected_type_name,

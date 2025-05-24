@@ -367,58 +367,41 @@ impl SerializerRegistry {
             "Deserializing value with type: {} (category: {:?})",
             type_name, original_category
         ));
+ 
+        // For complex types, store LazyDataWithOffset
+        self.logger.debug(format!(
+            "Lazy deserialization setup for complex type: {}",
+            type_name
+        ));
 
-        // For simple types, deserialize immediately from the slice
-        if self.is_simple_immediate_type(&type_name) {
-            self.logger.debug(format!(
-                "Immediate deserialization for simple type: {}",
-                type_name
-            ));
-            let deserializer = self
-                .get_deserializer_arc(&type_name)
-                .ok_or_else(|| anyhow!("Missing deserializer for simple type {}", type_name))?;
-            // Deserialize directly from the data slice
-            let boxed_any = deserializer.call(data_slice)?;
-            let value = ErasedArc::from_boxed_any(boxed_any)?;
+        // Check if a deserializer exists (even though we don't store it in LazyDataWithOffset,
+        // its registration confirms the type is known)
+        if self.deserializers.contains_key(&type_name) {
+            // Calculate offsets relative to the original Arc buffer
+            let data_start_offset =
+                (data_slice.as_ptr() as usize) - (bytes_arc.as_ptr() as usize);
+            let data_end_offset = data_start_offset + data_slice.len();
+
+            let lazy_data = LazyDataWithOffset {
+                type_name: type_name.to_string(),
+                original_buffer: bytes_arc.clone(), // Clone the Arc (cheap)
+                start_offset: data_start_offset,
+                end_offset: data_end_offset,
+            };
+
+            // Store Arc<LazyDataWithOffset> in value, keeping original category
+            let value = ErasedArc::from_value(lazy_data);
             return Ok(ArcValueType {
-                category: original_category,
+                category: original_category, // Keep original category (Map, Struct, etc.)
                 value,
             });
-                } else {
-            // For complex types, store LazyDataWithOffset
-            self.logger.debug(format!(
-                "Lazy deserialization setup for complex type: {}",
+        } else {
+            return Err(anyhow!(
+                "No deserializer registered for complex type, cannot create lazy value: {}",
                 type_name
             ));
-
-            // Check if a deserializer exists (even though we don't store it in LazyDataWithOffset,
-            // its registration confirms the type is known)
-            if self.deserializers.contains_key(&type_name) {
-                // Calculate offsets relative to the original Arc buffer
-                let data_start_offset =
-                    (data_slice.as_ptr() as usize) - (bytes_arc.as_ptr() as usize);
-                let data_end_offset = data_start_offset + data_slice.len();
-
-                let lazy_data = LazyDataWithOffset {
-                    type_name: type_name.to_string(),
-                    original_buffer: bytes_arc.clone(), // Clone the Arc (cheap)
-                    start_offset: data_start_offset,
-                    end_offset: data_end_offset,
-                };
-
-                // Store Arc<LazyDataWithOffset> in value, keeping original category
-                let value = ErasedArc::from_value(lazy_data);
-                return Ok(ArcValueType {
-                    category: original_category, // Keep original category (Map, Struct, etc.)
-                    value,
-                });
-            } else {
-                return Err(anyhow!(
-                    "No deserializer registered for complex type, cannot create lazy value: {}",
-                    type_name
-                ));
-            }
         }
+        
     }
 
     /// Get a stored deserializer by type name
@@ -654,15 +637,101 @@ impl ArcValueType {
     }
 
     /// Get value as a reference of the specified type
-    pub fn as_type_ref<T: 'static>(&self) -> Result<Arc<T>> {
+    pub fn as_type_ref<T: 'static>(&mut self) -> Result<Arc<T>> 
+    where 
+        T: 'static + Clone + for<'de> Deserialize<'de> 
+        + fmt::Debug + Send + Sync,
+    {
+        if self.value.is_lazy {
+            let type_name_clone: String;
+            let original_buffer_clone: Arc<[u8]>;
+            let start_offset_val: usize;
+            let end_offset_val: usize;
+
+            {
+                let lazy_data_arc = self.value.get_lazy_data().map_err(|e| 
+                    anyhow!("Failed to get lazy data despite is_lazy flag: {}", e)
+                )?;
+                type_name_clone = lazy_data_arc.type_name.clone();
+                original_buffer_clone = lazy_data_arc.original_buffer.clone();
+                start_offset_val = lazy_data_arc.start_offset;
+                end_offset_val = lazy_data_arc.end_offset;
+            }
+
+            // Perform type name check before deserialization
+            let expected_type_name = std::any::type_name::<T>();
+            if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                        return Err(anyhow!(
+                    "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
+                    expected_type_name,
+                    type_name_clone
+                ));
+            }
+
+            let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
+            let deserialized_value: T = bincode::deserialize(data_slice).map_err(|e| 
+                anyhow!(
+                    "Failed to deserialize lazy struct data for type '{}' into {}: {}",
+                    type_name_clone, std::any::type_name::<T>(), e
+                )
+            )?;
+
+            // Replace internal lazy value with the eager one
+            self.value = ErasedArc::new(Arc::new(deserialized_value));
+            // is_lazy is now false for self.value
+        }
         self.value.as_arc::<T>()
     }
 
     /// Get list as a reference of the specified element type
-    pub fn as_list_ref<T: 'static>(&self) -> Result<Arc<Vec<T>>> {
+    pub fn as_list_ref<T: 'static>(&mut self) -> Result<Arc<Vec<T>>> 
+    where 
+        T: 'static + Clone + for<'de> Deserialize<'de> 
+        + fmt::Debug + Send + Sync,
+    {
         if self.category != ValueCategory::List {
             return Err(anyhow!("Value is not a list"));
         }
+
+        if self.value.is_lazy {
+            let type_name_clone: String;
+            let original_buffer_clone: Arc<[u8]>;
+            let start_offset_val: usize;
+            let end_offset_val: usize;
+
+            {
+                let lazy_data_arc = self.value.get_lazy_data().map_err(|e| 
+                    anyhow!("Failed to get lazy data despite is_lazy flag: {}", e)
+                )?;
+                type_name_clone = lazy_data_arc.type_name.clone();
+                original_buffer_clone = lazy_data_arc.original_buffer.clone();
+                start_offset_val = lazy_data_arc.start_offset;
+                end_offset_val = lazy_data_arc.end_offset;
+            }
+
+            // Perform type name check before deserialization
+            let expected_type_name = std::any::type_name::<T>();
+            if !crate::types::erased_arc::compare_type_names(expected_type_name, &type_name_clone) {
+                        return Err(anyhow!(
+                    "Lazy data type mismatch: expected compatible with {}, but stored type is {}",
+                    expected_type_name,
+                    type_name_clone
+                ));
+            }
+
+            let data_slice = &original_buffer_clone[start_offset_val..end_offset_val];
+            let deserialized_value: Vec<T> = bincode::deserialize(data_slice).map_err(|e| 
+                anyhow!(
+                    "Failed to deserialize lazy struct data for type '{}' into {}: {}",
+                    type_name_clone, std::any::type_name::<T>(), e
+                )
+            )?;
+
+            // Replace internal lazy value with the eager one
+            self.value = ErasedArc::new(Arc::new(deserialized_value));
+            // is_lazy is now false for self.value
+        }
+
         self.value.as_arc::<Vec<T>>()
     }
 
@@ -730,7 +799,11 @@ impl ArcValueType {
     }
 
     /// Get value as the specified type (makes a clone)
-    pub fn as_type<T: 'static + Clone>(&self) -> Result<T> {
+    pub fn as_type<T: 'static + Clone>(&mut self) -> Result<T> 
+    where 
+        T: 'static + Clone + for<'de> Deserialize<'de> 
+        + fmt::Debug + Send + Sync,
+    {
         let arc = self.as_type_ref::<T>()?;
         Ok((*arc).clone())
     }
