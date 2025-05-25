@@ -9,7 +9,7 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ActionMetadata {
     /// The name of the action
-    pub path: String,
+    pub name: String,
     /// The description of the action
     pub description: String,
     /// The input schema for the action (if any)
