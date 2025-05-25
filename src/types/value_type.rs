@@ -89,24 +89,13 @@ pub struct SerializerRegistry {
     deserializers: FxHashMap<String, DeserializerFnWrapper>,
     is_sealed: bool,
     /// Logger for SerializerRegistry operations
-    logger: Logger,
+    logger: Arc<Logger>,
 }
 
 impl SerializerRegistry {
 
     /// Create a new registry with default logger
-    pub fn new() -> Self {
-        SerializerRegistry {
-            serializers: FxHashMap::default(),
-            deserializers: FxHashMap::default(),
-            is_sealed: false,
-            // Create a default logger with System component
-            logger: Logger::new_root(Component::System, "default"),
-        }
-    }
-
-    /// Create a new registry with a specific logger
-    pub fn with_logger(logger: Logger) -> Self {
+    pub fn new(logger: Arc<Logger>) -> Self {
         SerializerRegistry {
             serializers: FxHashMap::default(),
             deserializers: FxHashMap::default(),
@@ -116,15 +105,8 @@ impl SerializerRegistry {
     }
 
     /// Initialize with default types
-    pub fn with_defaults() -> Self {
-        let mut registry = Self::new();
-        registry.register_defaults();
-        registry
-    }
-
-    /// Initialize with default types and a specific logger
-    pub fn with_defaults_and_logger(logger: Logger) -> Self {
-        let mut registry = Self::with_logger(logger);
+    pub fn with_defaults(logger: Arc<Logger>) -> Self {
+        let mut registry = Self::new(logger);
         registry.register_defaults();
         registry
     }
