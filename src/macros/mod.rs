@@ -40,6 +40,50 @@ mod vmap_macros;
 /// ```
 // vmap! is defined in vmap_macros.rs
 
+/// Create a HashMap with key-value pairs
+///
+/// This macro allows you to create a HashMap with string keys and arbitrary values.
+/// The keys are converted to strings.
+///
+/// ## Map Creation Usage:
+///
+/// ```
+/// use runar_common::hmap;
+/// use std::collections::HashMap;
+/// // Create a new HashMap:
+/// let params = hmap!("a" => 5.0, "b" => 3.0);
+/// ```
+///
+/// ## Empty Map:
+///
+/// ```
+/// use runar_common::hmap;
+/// use std::collections::HashMap;
+/// // Create an empty map
+/// let empty = hmap!{};
+/// ```
+#[macro_export]
+macro_rules! hmap {
+    // Empty map
+    {} => {
+        {
+            use std::collections::HashMap;
+            let map: HashMap<String, _> = HashMap::new();
+            map
+        }
+    };
+    
+    // Map with key-value pairs
+    { $($key:expr => $value:expr),* $(,)? } => {
+        {
+            use std::collections::HashMap;
+            let mut map = HashMap::new();
+            $(map.insert($key.to_string(), $value);)*
+            map
+        }
+    };
+}
+
 // Define and export the vjson macro (JSON to ArcValueType)
 #[macro_export]
 macro_rules! vjson {

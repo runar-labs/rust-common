@@ -32,8 +32,8 @@
 /// let response = ArcValueType::new_primitive("test");
 /// let value = vmap!(response, => "default");
 /// ```
-#[macro_export]
 /// Create or extract from an ArcValueType map.
+#[macro_export]
 macro_rules! vmap {
     // Empty map
     {} => {
