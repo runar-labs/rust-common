@@ -1,6 +1,10 @@
 // runar_common/src/types/value_type.rs
 //
-// Type-erased value type with Arc preservation
+// Canonical value type for all value representations in the system.
+// As of [2024-06]: ArcValueType is the only supported value type.
+// All previous ValueType usages must be migrated to ArcValueType.
+// Architectural boundary: No other value type is permitted for serialization, API, or macro use.
+// See documentation in mod.rs and rust-docs/specs/ for rationale.
 
 use std::any::Any;
 use std::collections::HashMap;

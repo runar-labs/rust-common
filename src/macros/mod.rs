@@ -9,39 +9,38 @@
 // Note: Most complex macros should go in the rust-macros crate instead.
 
 // Import additional macro modules
-mod vmap_macros;
-mod deprecated;
+mod vmap_macros; 
 
 // Re-export macros from other modules
 // These macros are already #[macro_export] marked, which means they
 // are automatically available at the crate root namespace
 // We don't need to re-export them specifically
 
-/// Create a ValueType::Map with key-value pairs
+/// Create an ArcValueType::Map with key-value pairs
 ///
-/// This macro allows you to create a ValueType::Map with key-value pairs.
-/// The keys are converted to strings, and the values are converted to ValueType.
+/// This macro allows you to create an ArcValueType::Map with key-value pairs.
+/// The keys are converted to strings, and the values are converted to ArcValueType.
 ///
 /// ## Map Creation Usage:
 ///
 /// ```
 /// use runar_common::vmap;
-/// use runar_common::types::ValueType;
-/// // Create a new ValueType::Map:
-/// let params = vmap!{"name" => "John", "age" => 30, "active" => true};
+/// use runar_common::types::ArcValueType;
+/// // Create a new ArcValueType::Map:
+/// let params = vmap!("name" => "John", "age" => 30, "active" => true);
 /// ```
 ///
 /// ## Empty Map:
 ///
 /// ```
 /// use runar_common::vmap;
-/// use runar_common::types::ValueType;
+/// use runar_common::types::ArcValueType;
 /// // Create an empty map
 /// let empty = vmap!{};
 /// ```
 // vmap! is defined in vmap_macros.rs
 
-// Define and export the vjson macro (JSON to ValueType)
+// Define and export the vjson macro (JSON to ArcValueType)
 #[macro_export]
 macro_rules! vjson {
     ($($json:tt)+) => {

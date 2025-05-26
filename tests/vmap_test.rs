@@ -21,20 +21,20 @@ mod tests {
 
     #[test]
     fn test_basics() -> Result<()> {
-        let vmap = create_test_vmap();
+        let mut vmap = create_test_vmap();
 
         // Test direct key access
-        let value1 = vmap.get("key1").unwrap();
+        let value1 = vmap.inner.get_mut("key1").unwrap();
         let typed_value1: String = value1.as_type()?;
         assert_eq!(typed_value1, "value1");
 
         // Test number value
-        let value2 = vmap.get("key2").unwrap();
+        let value2 = vmap.inner.get_mut("key2").unwrap();
         let typed_value2: f64 = value2.as_type()?;
         assert_eq!(typed_value2, 42.0);
 
         // Test boolean value
-        let value3 = vmap.get("key3").unwrap();
+        let value3 = vmap.inner.get_mut("key3").unwrap();
         let typed_value3: bool = value3.as_type()?;
         assert!(typed_value3);
 
@@ -47,10 +47,10 @@ mod tests {
 
     #[test]
     fn test_error_handling() -> Result<()> {
-        let vmap = create_test_vmap();
+        let mut vmap = create_test_vmap();
 
         // Try to get a string as a number
-        let value1 = vmap.get("key1").unwrap();
+        let value1 = vmap.inner.get_mut("key1").unwrap();
         let result: Result<f64> = value1.as_type();
         assert!(result.is_err());
 
@@ -68,15 +68,17 @@ mod tests {
 
     #[test]
     fn test_clone() -> Result<()> {
-        let vmap = create_test_vmap();
-        let cloned = vmap.clone();
+        let mut vmap = create_test_vmap();
+        let mut cloned = vmap.clone();
 
         // Verify cloned map has the same values
         assert_eq!(vmap.inner.len(), cloned.inner.len());
 
         // Verify all keys and values are cloned
-        for (key, value) in vmap.inner.iter() {
-            let cloned_value = cloned.inner.get(key).unwrap();
+        let keys: Vec<_> = vmap.inner.keys().cloned().collect();
+        for key in keys {
+            let value = vmap.inner.get_mut(&key).unwrap();
+            let cloned_value = cloned.inner.get_mut(&key).unwrap();
 
             // Compare string values
             if let Ok(v1) = value.as_type::<String>() {
