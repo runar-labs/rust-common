@@ -149,7 +149,6 @@ impl FieldSchema {
         }
     }
 
-
     pub fn string(name: &str) -> Self {
         FieldSchema::new(name, SchemaDataType::String)
     }
@@ -178,8 +177,11 @@ impl FieldSchema {
         FieldSchema::new(name, SchemaDataType::Timestamp)
     }
 
-
-    pub fn object(name: &str, properties: HashMap<String, Box<FieldSchema>>, required: Option<Vec<String>>) -> Self {
+    pub fn object(
+        name: &str,
+        properties: HashMap<String, Box<FieldSchema>>,
+        required: Option<Vec<String>>,
+    ) -> Self {
         FieldSchema {
             name: name.to_string(),
             data_type: SchemaDataType::Object,
@@ -197,5 +199,4 @@ impl FieldSchema {
             ..FieldSchema::new(name, SchemaDataType::Array)
         }
     }
-
 }

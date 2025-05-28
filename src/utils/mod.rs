@@ -9,5 +9,5 @@ pub mod value_converters;
 pub mod logging;
 
 // Re-export everything from submodules
-pub use value_converters::*;
 pub use logging::*;
+pub use value_converters::*;

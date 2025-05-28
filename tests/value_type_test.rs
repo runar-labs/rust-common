@@ -4,13 +4,16 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use bincode;
+use runar_common::logging::{Component, Logger};
 use runar_common::types::{ArcValueType, ErasedArc, SerializerRegistry, ValueCategory};
-use runar_common::logging::{Logger, Component};
 use serde::{Deserialize, Serialize};
 
 // Create a test registry for use in tests
 fn create_test_registry() -> SerializerRegistry {
-    let mut registry = SerializerRegistry::with_defaults(Arc::new(Logger::new_root(Component::Custom("Test"), "test-node")));
+    let mut registry = SerializerRegistry::with_defaults(Arc::new(Logger::new_root(
+        Component::Custom("Test"),
+        "test-node",
+    )));
 
     // Register the test struct for serialization
     registry.register::<TestStruct>().unwrap();
@@ -177,8 +180,14 @@ fn test_struct_serialization() -> Result<()> {
 fn test_nested() -> Result<()> {
     // Create a map
     let mut map = HashMap::new();
-    map.insert("key1".to_string(), ArcValueType::new_primitive("value1".to_string()));
-    map.insert("key2".to_string(), ArcValueType::new_primitive("value2".to_string()));
+    map.insert(
+        "key1".to_string(),
+        ArcValueType::new_primitive("value1".to_string()),
+    );
+    map.insert(
+        "key2".to_string(),
+        ArcValueType::new_primitive("value2".to_string()),
+    );
 
     let mut value = ArcValueType::new_map(map);
 
@@ -188,7 +197,7 @@ fn test_nested() -> Result<()> {
 
     // Verify identity
     assert!(Arc::ptr_eq(&ref1, &ref2));
- 
+
     // Verify content
     assert_eq!(ref1.len(), 2);
     let mut key1_value = ref1.get("key1").unwrap().to_owned();
@@ -206,11 +215,10 @@ fn test_nested() -> Result<()> {
     let mut registry = create_test_registry();
     registry.register::<HashMap<String, ArcValueType>>();
 
-
     // let bytes = registry.serialize_value(&value)?;
     // let mut value_from_bytes = registry.deserialize_value(bytes)?;
     // let ref3 = value_from_bytes.as_map_ref::<String, ArcValueType>()?;
-    
+
     // assert_eq!(ref3.len(), 2);
     // let mut key1_value = ref3.get("key1").unwrap().to_owned();
     // let mut key2_value = ref3.get("key2").unwrap().to_owned();
@@ -356,7 +364,10 @@ fn test_primitive_cloning() -> Result<()> {
 #[test]
 fn test_registry_with_defaults() -> Result<()> {
     // Create a registry with defaults
-    let registry = SerializerRegistry::with_defaults(Arc::new(Logger::new_root(Component::Custom("Test"), "test-node")));
+    let registry = SerializerRegistry::with_defaults(Arc::new(Logger::new_root(
+        Component::Custom("Test"),
+        "test-node",
+    )));
 
     // Test serialization and deserialization of a primitive
     let value = ArcValueType::new_primitive(42i32);

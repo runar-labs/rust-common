@@ -10,7 +10,9 @@ mod vmap;
 
 // Export our types
 pub use self::erased_arc::ErasedArc;
-pub use self::schemas::{ActionMetadata, EventMetadata, FieldSchema, SchemaDataType, ServiceMetadata};
+pub use self::schemas::{
+    ActionMetadata, EventMetadata, FieldSchema, SchemaDataType, ServiceMetadata,
+};
 pub use self::value_type::{ArcValueType, SerializerRegistry, ValueCategory};
 pub use vmap::VMap;
 // Export the implement_from_for_valuetype macro

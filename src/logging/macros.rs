@@ -12,4 +12,4 @@
 // Instead of these macros, please use:
 // - context.info("message") when you have a context
 // - logger.info("message") when you have a logger instance
-// - Node-derived loggers for components via node.create_service_logger() 
+// - Node-derived loggers for components via node.create_service_logger()

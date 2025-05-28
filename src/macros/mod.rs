@@ -9,7 +9,7 @@
 // Note: Most complex macros should go in the rust-macros crate instead.
 
 // Import additional macro modules
-mod vmap_macros; 
+mod vmap_macros;
 
 // Re-export macros from other modules
 // These macros are already #[macro_export] marked, which means they
@@ -72,7 +72,7 @@ macro_rules! hmap {
             map
         }
     };
-    
+
     // Map with key-value pairs
     { $($key:expr => $value:expr),* $(,)? } => {
         {

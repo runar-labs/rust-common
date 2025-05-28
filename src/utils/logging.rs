@@ -121,4 +121,4 @@ pub fn configure_test_logging() {
         })
         .is_test(true)
         .init();
-} 
+}

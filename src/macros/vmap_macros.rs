@@ -4,21 +4,21 @@
 // All legacy ValueType logic has been removed. See rust-docs/specs/ for migration details.
 
 /// Create a HashMap with ValueType values
-/// 
+///
 /// This macro allows for easy creation of parameter maps for service requests.
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```
 /// use runar_common::vmap;
 /// use runar_common::types::ArcValueType;
-/// 
+///
 /// let map = vmap! {
 ///     "name" => "John Doe",
 ///     "age" => 30,
 ///     "is_admin" => true
 /// };
-/// 
+///
 /// // Create an empty map
 /// let empty = vmap! {};
 /// ```
@@ -44,7 +44,7 @@ macro_rules! vmap {
             ArcValueType::new_map(map)
         }
     };
-    
+
     // Map with key-value pairs
     { $($key:expr => $value:expr),* $(,)? } => {
         {
@@ -57,7 +57,7 @@ macro_rules! vmap {
             ArcValueType::new_map(map)
         }
     };
-    
+
     // Extract a value from a map with default
     ($map:expr, $key:expr => $default:expr) => {
         {
@@ -108,7 +108,7 @@ macro_rules! vmap {
             }
         }
     };
-    
+
     // Extract a direct value with default
     ($value:expr, => $default:expr) => {
         match &$value {
@@ -144,7 +144,7 @@ macro_rules! vmap {
             _ => $default,
         }
     };
-    
+
     // Simple key extraction without default
     ($map:expr, $key:expr) => {
         {

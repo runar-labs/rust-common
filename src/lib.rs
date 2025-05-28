@@ -20,4 +20,3 @@ pub use service_info::ServiceInfo;
 // Re-export the macros so they can be used with `use runar_common::vmap;` syntax
 // These macros are already automatically available at the crate root namespace with #[macro_export]
 // This is just to make imports cleaner and more intuitive
- 
