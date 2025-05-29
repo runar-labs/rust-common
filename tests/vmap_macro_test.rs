@@ -1,6 +1,4 @@
-use std::any::Any;
-
-use runar_common::types::{ArcValueType, ValueCategory};
+use runar_common::types::ValueCategory;
 use runar_common::vmap;
 
 // A simplified test to verify basic vmap functionality
